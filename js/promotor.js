@@ -1,7 +1,7 @@
 // App do promotor: rota do dia, check-in com GPS + raio + selfie, fotos antes/depois, checklist, check-out
 import {
   auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
-  deleteDoc, collection, query, where, onSnapshot,
+  deleteDoc, collection, query, where, onSnapshot, serverTimestamp,
   emailPromotor, senhaPromotor, $, h, semAcento, DIAS_LONGO, ymd, diaSemana, hm, dur, lsGet, lsSet,
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
@@ -38,15 +38,20 @@ onAuthStateChanged(auth, async user => {
   if (!user) { show('v-login'); $('#sair').hidden = true; $('#quem').textContent = ''; return; }
   S.uid = user.uid; $('#sair').hidden = false;
   if (user.uid === ADMIN_UID) { location.href = 'gestao.html'; return; }
+  const guardado = lsGet('np.pid.' + user.uid);
   try {
     const u = await getDoc(doc(db, 'usuarios', user.uid));
     if (!u.exists()) {
+      if (guardado && !navigator.onLine) { S.pid = guardado; iniciar(); return; }
       try { if ((await getDoc(doc(db, 'admins', user.uid))).exists()) { location.href = 'gestao.html'; return; } } catch (e) {}
       show('v-semacesso'); return;
     }
-    S.pid = u.data().promotorId;
+    S.pid = u.data().promotorId; lsSet('np.pid.' + user.uid, S.pid);
     iniciar();
-  } catch (e) { show('v-semacesso'); toast(erroMsg(e)); }
+  } catch (e) {
+    if (guardado) { S.pid = guardado; iniciar(); return; } // sem sinal: usa o que já estava no celular
+    show('v-semacesso'); toast(erroMsg(e));
+  }
 });
 
 function iniciar() {
@@ -55,12 +60,33 @@ function iniciar() {
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists() && +s.data().raio) S.raio = +s.data().raio; }, () => {}));
   S.unsub.push(onSnapshot(query(collection(db, 'lojas'), where('promotorId', '==', S.pid)), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); }, e => toast(erroMsg(e))));
-  S.unsub.push(onSnapshot(query(collection(db, 'dias', S.hoje, 'visitas'), where('promotorId', '==', S.pid)), s => {
-    const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.vis = m; render(); if (S.visita) renderVisita();
+  S.unsub.push(onSnapshot(query(collection(db, 'dias', S.hoje, 'visitas'), where('promotorId', '==', S.pid)), { includeMetadataChanges: true }, s => {
+    const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.vis = m;
+    S.pendVis = s.docs.filter(d => d.metadata && d.metadata.hasPendingWrites).length; rede();
+    render(); if (S.visita) renderVisita();
   }, e => toast(erroMsg(e))));
+  window.addEventListener('online', rede); window.addEventListener('offline', rede); rede();
   // vira o dia sozinho se o app ficar aberto
   setInterval(() => { if (ymd(new Date()) !== S.hoje) location.reload(); }, 60000);
 }
+
+/* ---------- sem sinal: aviso do que está guardado no celular ---------- */
+S.pendVis = 0; S.pendFotos = 0;
+function rede() {
+  let b = $('#rede');
+  if (!b) { b = document.createElement('div'); b.id = 'rede'; b.className = 'rede'; document.body.appendChild(b); }
+  const n = S.pendVis + S.pendFotos; const off = !navigator.onLine;
+  if (!off && !n) { b.hidden = true; return; }
+  b.hidden = false; b.className = 'rede ' + (off ? 'off' : 'env');
+  b.textContent = off ? (n ? `Sem sinal · ${n} registro${n > 1 ? 's' : ''} guardado${n > 1 ? 's' : ''} no celular. ${n > 1 ? 'Serão enviados sozinhos' : 'Será enviado sozinho'} quando o sinal voltar.` : 'Sem sinal · pode trabalhar normal: tudo fica guardado no celular e é enviado quando o sinal voltar.')
+    : `Enviando ${n} registro${n > 1 ? 's' : ''}…`;
+}
+// grava e acompanha o envio (sem sinal, a gravação fica no celular até a internet voltar)
+function grava(p, ehFoto) {
+  if (ehFoto) { S.pendFotos++; rede(); }
+  return p.then(r => r, e => { toast(erroMsg(e), 6000); }).finally(() => { if (ehFoto) { S.pendFotos = Math.max(0, S.pendFotos - 1); rede(); } });
+}
+const msgSalvo = txt => toast(navigator.onLine ? txt : txt + ' (guardado no celular, envia quando tiver sinal)', navigator.onLine ? 3200 : 5000);
 
 /* ---------- rota do dia ---------- */
 const wdHoje = () => diaSemana(S.hoje);
@@ -149,12 +175,13 @@ function renderVisita() {
 function novaVisita(extra) {
   const V = S.visita;
   return Object.assign({ data: S.hoje, lojaId: V.loja.id, lojaNome: V.loja.nome, codigo: V.loja.codigo || '', cidade: V.loja.cidade || '', promotorId: S.pid, promotorNome: S.prom ? S.prom.nome : '',
-    foraRota: V.fora, ordem: V.fora ? null : V.ordem + 1, checklist: {}, obs: '', fotos: 0, uid: S.uid, atualizado: Date.now() }, extra);
+    foraRota: V.fora, ordem: V.fora ? null : V.ordem + 1, checklist: {}, obs: '', fotos: 0, uid: S.uid, atualizado: Date.now(),
+    recebidoIn: serverTimestamp(), recebido: serverTimestamp() }, extra);
 }
 async function checkin() {
   const V = S.visita; const b = $('#b-in'); b.disabled = true; b.firstChild.textContent = 'Pegando o GPS…';
   let gps;
-  try { gps = await pegaGPS(); } catch (e) { toast(e.message, 6000); b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
+  try { gps = await pegaGPS(45000); } catch (e) { toast(e.message, 6000); b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
   let dist = null;
   if (V.loja.lat != null) {
     dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng }));
@@ -173,11 +200,9 @@ async function checkin() {
   const foto = { d: await comprime(cv), ts: Date.now(), tipo: 'chegada', gps };
   const visita = novaVisita({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, semCoord: V.loja.lat == null, fotos: 1 });
   S.vis[V.id] = visita; S.fotos = [foto]; renderVisita();
-  try {
-    await setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita);
-    await setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] });
-    toast('Check-in registrado às ' + hm(visita.checkin));
-  } catch (e) { toast(erroMsg(e), 6000); }
+  grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
+  grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);
+  msgSalvo('Check-in registrado às ' + hm(visita.checkin));
 }
 async function checkout() {
   const V = S.visita; const v = S.vis[V.id];
@@ -187,9 +212,9 @@ async function checkout() {
   if (faltam && !(await confirma(`${faltam} pergunta(s) do checklist sem resposta. Fazer check-out mesmo assim?`, 'Fazer check-out'))) return;
   const b = $('#b-out'); if (b) { b.disabled = true; b.textContent = 'Pegando o GPS…'; }
   let gps = null, dist = null;
-  try { gps = await pegaGPS(15000); if (V.loja.lat != null) dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng })); } catch (e) {}
+  try { gps = await pegaGPS(30000); if (V.loja.lat != null) dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng })); } catch (e) {}
   const t = Date.now();
-  atualiza({ status: 'concluida', checkout: t, gpsOut: gps, distOut: dist }).then(() => toast('Check-out às ' + hm(t)));
+  atualiza({ status: 'concluida', checkout: t, gpsOut: gps, distOut: dist }); msgSalvo('Check-out às ' + hm(t));
 }
 function naoVisitou() {
   abreModal(`<h3>Por que não visitou?</h3><div class="chips" id="mot">${MOTIVOS.map(m => `<button class="chip" aria-pressed="false" data-m="${h(m)}">${h(m)}</button>`).join('')}</div>
@@ -203,15 +228,15 @@ function naoVisitou() {
     let gps = null; try { gps = await pegaGPS(10000); } catch (e) {}
     const visita = novaVisita({ status: 'nao_visitada', motivo: esc, obs, registrado: Date.now(), gpsIn: gps });
     S.vis[S.visita.id] = visita; renderVisita();
-    setDoc(doc(db, 'dias', S.hoje, 'visitas', S.visita.id), visita).catch(e => toast(erroMsg(e)));
+    grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', S.visita.id), visita)); msgSalvo('Registrado');
   };
 }
 function atualiza(campos) {
   const V = S.visita; const v = S.vis[V.id];
   if (v) { S.vis[V.id] = Object.assign({}, v, campos, campos.checklist ? { checklist: Object.assign({}, v.checklist, campos.checklist) } : {}); renderVisita(); }
-  const upd = Object.assign({}, campos, { atualizado: Date.now() });
+  const upd = Object.assign({}, campos, { atualizado: Date.now(), recebido: serverTimestamp() });
   if (campos.checklist) { delete upd.checklist; Object.entries(campos.checklist).forEach(([k, val]) => upd['checklist.' + k.replace(/[.~*/\[\]]/g, '_')] = val); }
-  return updateDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), upd).catch(e => toast(erroMsg(e)));
+  return grava(updateDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), upd));
 }
 
 function renderFotos() {
@@ -233,8 +258,8 @@ function renderFotos() {
 }
 function salvaFotos(lista) {
   const V = S.visita; S.fotos = lista; renderFotos();
-  setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: lista })
-    .then(() => { atualiza({ fotos: lista.length }); toast('Foto salva'); }, e => toast(erroMsg(e)));
+  grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: lista }), true);
+  atualiza({ fotos: lista.length }); msgSalvo('Foto salva');
 }
 function renderCheck(v) {
   const box = $('#v-check'); const resp = v.checklist || {};
@@ -250,5 +275,5 @@ function renderCheck(v) {
 let obsT = null;
 $('#v-obs').addEventListener('input', () => {
   $('#v-obs-st').textContent = 'Salvando…'; clearTimeout(obsT);
-  obsT = setTimeout(() => atualiza({ obs: $('#v-obs').value }).then(() => $('#v-obs-st').textContent = 'Salvo'), 900);
+  obsT = setTimeout(() => { atualiza({ obs: $('#v-obs').value }); $('#v-obs-st').textContent = navigator.onLine ? 'Salvo' : 'Salvo no celular'; }, 900);
 });

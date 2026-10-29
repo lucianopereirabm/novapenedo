@@ -145,6 +145,16 @@ function desenhaMapa() {
   setTimeout(() => P.mapa.invalidateSize(), 50);
   $('#p-legenda').innerHTML = Object.keys(porProm).map(pid => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${corDe(pid)}"></span> ${h(prim(pid))}</span>`).join('') + (pts.length ? '<span class="muted">· círculo vazado = local cadastrado da loja · tracejado = trajeto do dia</span>' : '<span class="muted">Sem check-ins com GPS nesta data.</span>');
 }
+// Mostra quando o registro feito no celular chegou ao sistema (registros sem sinal chegam depois)
+const ms = t => t && typeof t.toMillis === 'function' ? t.toMillis() : (typeof t === 'number' ? t : null);
+function linhaEnvio(v) {
+  const rIn = ms(v.recebidoIn), r = ms(v.recebido);
+  if (!rIn) return '';
+  const atrasoIn = rIn - (v.checkin || v.registrado || rIn), atrasoOut = v.checkout && r ? r - v.checkout : 0;
+  const longe = x => x > 10 * 60000;
+  if (!longe(atrasoIn) && !longe(atrasoOut)) return '<div class="muted" style="font-size:13px">Registros enviados na hora (com sinal).</div>';
+  return `<div class="note warn">Feito sem sinal: ${longe(atrasoIn) ? `check-in feito às ${hm(v.checkin || v.registrado)} e recebido às ${hm(rIn)}` : ''}${longe(atrasoIn) && longe(atrasoOut) ? ' · ' : ''}${longe(atrasoOut) ? `check-out feito às ${hm(v.checkout)} e recebido às ${hm(r)}` : ''}. Os horários e o GPS valem do momento em que foram feitos no celular.</div>`;
+}
 async function detalheVisita(date, id) {
   const v = P.vis[id]; if (!v) return;
   const loja = S.lojas.find(l => l.id === v.lojaId);
@@ -153,6 +163,7 @@ async function detalheVisita(date, id) {
     ${v.status === 'nao_visitada' ? `<div class="note warn"><b>Não visitada:</b> ${h(v.motivo)}${v.obs ? ' — ' + h(v.obs) : ''}</div>` :
     `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout)}</b></div></div>
      <div class="note ${v.semCoord ? 'warn' : v.distIn > S.raio ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m da loja` : ''}${v.distOut != null ? ` · check-out a ${v.distOut} m` : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
+     ${linhaEnvio(v)}
      ${v.gpsIn && loja ? `<div class="row"><button class="btn sm" id="md-local">Usar este ponto como local da loja</button><a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
      <div><div class="label">Checklist</div>${Object.keys(resp).filter(k => resp[k]).map(k => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(k)}</span><b>${resp[k] === 'sim' ? 'Sim' : 'Não'}</b></div>`).join('') || '<div class="muted">Sem respostas.</div>'}</div>
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}

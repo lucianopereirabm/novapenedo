@@ -5,7 +5,7 @@ import {
   createUserWithEmailAndPassword, updatePassword, setPersistence, browserLocalPersistence
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager, serverTimestamp,
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where,
   onSnapshot, writeBatch, deleteField
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
@@ -23,15 +23,20 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(() => {});
 let _db;
+// Banco guardado no celular: o que for registrado sem sinal fica salvo e é enviado sozinho quando a internet voltar,
+// mesmo que o app seja fechado nesse meio-tempo.
 try {
   _db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 } catch (e) {
-  _db = initializeFirestore(app, {});
+  try { _db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() }) }); }
+  catch (e2) { _db = initializeFirestore(app, {}); }
 }
+// pede ao celular para não apagar os dados guardados
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 export const db = _db;
 export {
   signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
-  deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField
+  deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField, serverTimestamp
 };
 
 // ---------- login dos promotores ----------
@@ -122,7 +127,7 @@ export function pegaGPS(timeout = 20000) {
     navigator.geolocation.getCurrentPosition(
       p => res({ lat: p.coords.latitude, lng: p.coords.longitude, prec: Math.round(p.coords.accuracy), ts: p.timestamp }),
       e => rej(new Error(e.code === 1 ? 'Permita o acesso à localização para fazer o check-in (cadeado ao lado do endereço > Localização > Permitir).' : 'Não consegui pegar o GPS. Vá para um lugar aberto e tente de novo.')),
-      { enableHighAccuracy: true, timeout, maximumAge: 15000 }
+      { enableHighAccuracy: true, timeout, maximumAge: 10000 }
     );
   });
 }
