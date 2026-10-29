@@ -1,5 +1,5 @@
 // Service worker: guarda o app para abrir sem internet. Sempre tenta a rede primeiro.
-const CACHE = 'rota-np-v1';
+const CACHE = 'rota-np-v2';
 const ARQS = ['./', './index.html', './gestao.html', './css/app.css', './js/fb.js', './js/promotor.js', './js/gestao.js',
   './manifest.webmanifest', './img/icon-192.png', './img/icon-512.png', './img/logo.png', './img/logo-full.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARQS)).then(() => self.skipWaiting())); });
