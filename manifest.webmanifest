@@ -1,0 +1,16 @@
+{
+  "name": "Rota Nova Penedo",
+  "short_name": "Rota NP",
+  "description": "Rota do promotor Nova Penedo: check-in com GPS, fotos e checklist.",
+  "lang": "pt-BR",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#171925",
+  "theme_color": "#171925",
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

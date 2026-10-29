@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Administrador principal (Luciano) + quem estiver na lista "admins"
+    function logado() { return request.auth != null; }
+    function isAdmin() {
+      return logado() && (
+        request.auth.uid == 'LwETkIMFw0b6gVWl6XV450J1Dr12' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+    // Promotor ligado a este login (cadastrado pela Gestão)
+    function meuPromotor() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.promotorId;
+    }
+    function isEquipe() {
+      return isAdmin() || (logado() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)));
+    }
+
+    match /admins/{uid}    { allow read: if isAdmin(); allow write: if isAdmin(); }
+    match /usuarios/{uid}  { allow read: if isAdmin() || (logado() && request.auth.uid == uid); allow write: if isAdmin(); }
+
+    // Cadastros: equipe lê, só administrador altera
+    match /promotores/{id} { allow read: if isEquipe(); allow write: if isAdmin(); }
+    match /lojas/{id}      { allow read: if isEquipe(); allow write: if isAdmin(); }
+    match /config/{id}     { allow read: if isEquipe(); allow write: if isAdmin(); }
+
+    // Vendas, trocas e variável: só administrador
+    match /vendas/{id}     { allow read, write: if isAdmin(); }
+    match /acessos/{id}    { allow read, write: if isAdmin(); }
+    match /variavel/{id}   { allow read, write: if isAdmin(); }
+
+    // Visitas do dia: promotor só cria/altera as próprias
+    match /dias/{dia}/visitas/{vid} {
+      allow read: if isAdmin() || (isEquipe() && resource.data.promotorId == meuPromotor());
+      allow create: if isAdmin() || (isEquipe() && request.resource.data.promotorId == meuPromotor());
+      allow update: if isAdmin() || (isEquipe()
+        && resource.data.promotorId == meuPromotor()
+        && request.resource.data.promotorId == meuPromotor());
+      allow delete: if isAdmin() || (isEquipe() && resource.data.promotorId == meuPromotor());
+    }
+    // Fotos da visita: id termina com _<promotor>
+    match /dias/{dia}/fotos/{vid} {
+      allow read, write: if isAdmin() || (isEquipe() && vid.matches('.*_' + meuPromotor()));
+    }
+
+    // Todo o resto: bloqueado
+    match /{document=**} { allow read, write: if false; }
+  }
+}
