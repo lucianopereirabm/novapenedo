@@ -217,3 +217,7 @@ tr.click:hover td{background:var(--sunk)}
 #mapa.mapa-det{height:calc(100vh - 290px);min-height:420px}
 @media (min-width:1100px){.det-grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
 .mk.aprox{border-style:dashed}
+
+.tcard .ultimo{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-4px}
+.ic-ev{display:inline-flex;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;margin-right:4px;vertical-align:-2px}
+.ic-ev.ok{background:#27AE60}.ic-ev.live{background:#F2994A}.ic-ev.no{background:#EB5757}

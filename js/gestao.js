@@ -156,6 +156,7 @@ function renderPainel() {
       <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b><div class="st">${statusTexto(d)}</div></div>
         <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
       ${estrada(d)}
+      <div class="ultimo">${ultimoEvento(d)}</div>
       <div class="spread muted num" style="font-size:12px"><span>${d.primeira ? 'Início ' + hm(d.primeira) : '—'}${d.ultimaSaida ? ' · última saída ' + hm(d.ultimaSaida) : ''}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
   }).join('');
   $('#p-cards').querySelectorAll('[data-p]').forEach(b => b.onclick = () => abreDetalhe(b.dataset.p));
@@ -168,6 +169,16 @@ function renderPainel() {
   if (gb && !tentou) setTimeout(() => { const b = $('#p-geo-b'); if (b) b.click(); }, 1500);
   $('#p-atual').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   mapaGeral(dias);
+}
+// Último acontecimento do promotor no dia (aparece embaixo da estradinha)
+function ultimoEvento(d) {
+  const ev = [];
+  d.paradas.forEach(x => { const v = x.v; if (!v) return; const n = `${x.extra ? '' : x.ordem + 'ª · '}${h(x.nome)}`;
+    if (v.status === 'nao_visitada') ev.push({ t: v.registrado || 0, html: `<span class="ic-ev no">✕</span> Não visitou <b>${n}</b> · ${h(v.motivo || '')} · ${hm(v.registrado)}` });
+    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${v.distIn != null && v.distIn > S.raio ? ` · <span style="color:var(--crit)">${v.distIn} m</span>` : ''}` });
+      if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
+  if (!ev.length) return '<span class="muted">Aguardando o primeiro check-in</span>';
+  return ev.sort((a, b) => b.t - a.t)[0].html;
 }
 const abreDetalhe = pid => { P.sel = pid; window.scrollTo(0, 0); renderPainel(); };
 function statusTexto(d) {
