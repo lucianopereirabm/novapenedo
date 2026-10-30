@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-10-30.11';
+const VERSAO_GESTAO = '2026-10-30.12';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -352,6 +352,17 @@ async function geocodifica(l) {
   }
   return null;
 }
+// Localiza a residência do promotor (para o deslocamento casa → primeira loja)
+async function localizaCasa(p) {
+  if (!p.endereco && !p.cidadeRes) { await updateDoc(doc(db, 'promotores', p.id), { casa: deleteField() }).catch(() => {}); return null; }
+  const partes = String(p.endereco || '').split(',').map(x => x.trim()).filter(Boolean);
+  const rua = partes[0] || '', num = /^\d+/.test(partes[1] || '') ? partes[1].match(/^\d+/)[0] : '';
+  const bairro = partes.length > 1 && !/^\d/.test(partes[partes.length - 1]) ? partes[partes.length - 1].replace(/\(.*\)/, '').trim() : '';
+  const g = await geocodifica({ endereco: [rua, num].filter(Boolean).join(', '), bairro, municipio: p.cidadeRes, uf: p.ufRes || 'RJ', cidade: [p.cepRes, p.cidadeRes].filter(Boolean).join(' ') });
+  const casa = g ? { lat: g.latAprox, lng: g.lngAprox, nivel: g.aproxNivel, em: Date.now() } : null;
+  await updateDoc(doc(db, 'promotores', p.id), { casa: casa || deleteField() }).catch(() => {});
+  return casa;
+}
 // Localiza as lojas sem ponto (1 por segundo, regra do serviço gratuito de mapas)
 async function localizaLojas(lista, aviso) {
   if (G.rodando) return toast('Já estou localizando as lojas. Aguarde.');
@@ -405,7 +416,7 @@ function renderDetalhe(d) {
   }).join('');
   if (box.dataset.modo !== 'det') {
     box.dataset.modo = 'det'; tiraMapa();
-    box.innerHTML = `<div class="stack"><div id="p-dhead"></div><div id="p-dest"></div>
+    box.innerHTML = `<div class="stack"><div id="p-dhead"></div><div id="p-ddesl" class="desl"></div><div id="p-dest"></div>
       <div class="det-grid"><div class="stack" style="gap:6px"><div id="mapa" class="mapa-det"></div><div class="row" style="gap:8px;font-size:12px" id="p-dgeo"></div></div>
       <div class="card" style="padding:0"><div class="table-wrap"><table class="num det"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou–saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody id="p-dtab"></tbody></table></div></div></div>
       <div class="muted" style="font-size:12px">Mapa: números = ordem da rota do dia (verde concluída, laranja em loja, branco pendente, vermelho não visitada ou com alerta); tracejado = rota planejada; linha verde = caminho feito pelos check-ins (pontinhos). Lojas com ponto aproximado (pelo endereço) aparecem com borda tracejada. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
@@ -419,6 +430,43 @@ function renderDetalhe(d) {
   $('#p-outro').onchange = e => { P.sel = e.target.value; renderPainel(); };
   $('#p-dtab').querySelectorAll('tr[data-v]').forEach(tr => tr.onclick = () => detalheVisita(P.data, tr.dataset.v));
   desenhaMapa(d);
+}
+// Deslocamento casa → primeira loja e última loja → casa (rota de carro pelo OSRM; se falhar, estimativa em linha reta)
+const ROTAS = {};
+async function trajeto(a, b) {
+  const k = a.map(x => x.toFixed(4)).join(',') + ';' + b.map(x => x.toFixed(4)).join(',');
+  if (ROTAS[k]) return ROTAS[k];
+  try {
+    const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=false`).then(r => r.json());
+    if (r.routes && r.routes[0]) return ROTAS[k] = { km: r.routes[0].distance / 1000, min: r.routes[0].duration / 60, est: false };
+  } catch (e) {}
+  const km = distancia({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] }) / 1000 * 1.3;
+  return ROTAS[k] = { km, min: km / 40 * 60, est: true };
+}
+const kmTxt = t => `${t.km.toFixed(1).replace('.', ',')} km · ~${Math.round(t.min)} min${t.est ? ' (estimado)' : ''}`;
+async function deslocamento(d) {
+  const el = $('#p-ddesl'); if (!el) return;
+  const p = S.promotores.find(x => x.id === d.pid) || {};
+  if (!p.casa) { el.innerHTML = `<span class="muted">🏠 ${p.endereco ? 'Casa ainda não localizada no mapa: abra a ficha em Equipe e salve.' : 'Sem endereço residencial na ficha (Equipe e acessos).'}</span>`; return; }
+  const casa = [p.casa.lat, p.casa.lng];
+  const ponto = x => x.v && x.v.gpsIn ? [x.v.gpsIn.lat, x.v.gpsIn.lng] : pontoLoja(S.lojas.find(l => l.id === x.lojaId));
+  const feitos = d.paradas.filter(x => x.v && x.v.checkin).sort((a, b) => a.v.checkin - b.v.checkin);
+  const plano = d.paradas.filter(x => !x.extra);
+  const prim = feitos[0] || plano[0];
+  const fechou = d.J.tem && !d.J.andamento && !d.J.hojeAberto && feitos.some(x => x.v.checkout);
+  const ult = fechou ? feitos.filter(x => x.v.checkout).sort((a, b) => b.v.checkout - a.v.checkout)[0] : plano[plano.length - 1];
+  const pa = prim && ponto(prim), pu = ult && ponto(ult);
+  el.innerHTML = '<span class="muted">🏠 Calculando deslocamento…</span>';
+  const ida = pa ? await trajeto(casa, pa) : null, volta = pu ? await trajeto(pu, casa) : null;
+  if (!$('#p-ddesl') || P.sel !== d.pid) return;
+  const saida = ida && feitos[0] ? feitos[0].v.checkin - ida.min * 60000 : null;
+  el.innerHTML = `🏠 <b>Casa → ${feitos[0] ? '1ª loja visitada' : '1ª loja da rota'}</b>${prim ? ' (' + h(prim.nome) + ')' : ''}: ${ida ? kmTxt(ida) : 'sem ponto da loja'}${saida ? ` · chegou ${hm(feitos[0].v.checkin)}, saída de casa estimada ${hm(saida)}` : ''}
+    &nbsp;|&nbsp; <b>${fechou ? 'Última loja' : 'Última loja da rota'} → casa</b>${ult ? ' (' + h(ult.nome) + ')' : ''}: ${volta ? kmTxt(volta) : 'sem ponto da loja'}${fechou && volta ? ` · saiu ${hm(ult.v.checkout)}, chegada em casa estimada ${hm(ult.v.checkout + volta.min * 60000)}` : ''}`;
+  if (P.mapa && P.mapaChave === 'det|' + d.pid + '|' + P.data) {
+    L.marker(casa, { zIndexOffset: 800, icon: L.divIcon({ className: '', html: '<div class="mk casa">🏠</div>', iconSize: [30, 30], iconAnchor: [15, 15] }) }).bindPopup(`<b>Casa de ${h(nomeCurto(d.pid))}</b><br>${h(p.endereco || '')}, ${h(p.cidadeRes || '')}`).addTo(P.camada);
+    if (pa) L.polyline([casa, pa], { color: '#2F80ED', weight: 3, opacity: .7, dashArray: '2 8' }).addTo(P.camada);
+    if (pu) L.polyline([pu, casa], { color: '#9B51E0', weight: 3, opacity: .6, dashArray: '2 8' }).addTo(P.camada);
+  }
 }
 function desenhaMapa(d) {
   if (!window.L) { setTimeout(() => { if (P.sel === d.pid) desenhaMapa(d); }, 400); return; }
@@ -440,7 +488,8 @@ function desenhaMapa(d) {
     L.marker(y.p, { zIndexOffset: 500, icon: L.divIcon({ className: '', html: `<div class="mk${y.aprox ? ' aprox' : ''}" style="background:${cor};color:${txt}">${y.x.extra ? '+' : y.x.ordem}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
       .bindPopup(`<b>${y.x.extra ? 'Fora da rota' : y.x.ordem + 'ª parada'} · ${h(y.x.nome)}</b><br>${!v ? 'Pendente' : v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${y.aprox ? '<br><i>ponto aproximado pelo endereço</i>' : ''}`).addTo(P.camada);
   });
-  enquadra(pts);
+  const pc = (S.promotores.find(x => x.id === d.pid) || {}).casa; if (pc) pts.push([pc.lat, pc.lng]);
+  enquadra(pts); deslocamento(d);
   const sem = d.paradas.filter(x => !x.extra).map(x => S.lojas.find(l => l.id === x.lojaId)).filter(l => l && !pontoLoja(l));
   const el = $('#p-dgeo');
   if (el && !G.rodando) el.innerHTML = sem.length ? `<span class="muted">${sem.length} de ${d.programadas} lojas sem ponto no mapa.</span><button class="btn sm" id="p-dgeo-b">Localizar pelo endereço</button>` : '';
@@ -835,6 +884,10 @@ function editaPromotor(p) {
     <label class="field"><span>Senha do app (4 números)</span><input type="text" name="codigo" inputmode="numeric" maxlength="4" autocomplete="off" value="${h(a ? a.codigo : '')}" placeholder="ex.: ${codigoNovo()}"></label></div>
     <div class="muted" style="font-size:12.5px;margin-top:-6px">${a ? 'Ao mudar o login ou a senha, o promotor passa a entrar com os novos na hora. Quem estiver com o app aberto precisará entrar de novo.' : 'Deixe em branco para criar o acesso depois. O login usa só letras minúsculas e números, sem espaço nem acento.'}</div>
     <label class="field"><span>Base (cidade)</span><input type="text" name="base" value="${h(p.base || '')}"></label>
+    <div class="label" style="margin-top:4px">Residência (para o deslocamento casa → loja)</div>
+    <label class="field"><span>Endereço (rua, número, complemento, bairro)</span><input type="text" name="endereco" value="${h(p.endereco || '')}"></label>
+    <div class="row" style="gap:10px"><label class="field" style="flex:2"><span>Cidade</span><input type="text" name="cidadeRes" value="${h(p.cidadeRes || '')}"></label><label class="field" style="flex:1"><span>UF</span><input type="text" name="ufRes" maxlength="2" value="${h(p.ufRes || 'RJ')}"></label><label class="field" style="flex:1.4"><span>CEP</span><input type="text" name="cepRes" value="${h(p.cepRes || '')}"></label></div>
+    <div class="muted" style="font-size:12px">${p.casa ? `📍 Casa localizada no mapa (${p.casa.nivel === 'rua' ? 'pela rua' : 'aproximada pelo bairro/cidade'}).` : 'A casa é localizada no mapa automaticamente ao salvar.'}</div>
     <label class="field"><span>Telefone</span><input type="tel" name="telefone" value="${h(p.telefone || '')}"></label>
     <label class="field"><span>E-mail</span><input type="email" name="email" value="${h(p.email || '')}"></label>
     <label class="field"><span>Situação</span><select name="ativo"><option value="1" ${p.ativo !== false ? 'selected' : ''}>Ativo</option><option value="" ${p.ativo === false ? 'selected' : ''}>Inativo (não aparece nas rotas e não entra no app)</option></select></label>
@@ -858,7 +911,9 @@ function editaPromotor(p) {
   };
   $('#ep').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
-    const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), atualizado: Date.now() };
+    const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), atualizado: Date.now(),
+      endereco: String(f.get('endereco') || '').trim(), cidadeRes: String(f.get('cidadeRes') || '').trim(), ufRes: String(f.get('ufRes') || '').trim().toUpperCase(), cepRes: String(f.get('cepRes') || '').trim() };
+    const mudouCasa = novo || v.endereco !== (p.endereco || '') || v.cidadeRes !== (p.cidadeRes || '') || v.cepRes !== (p.cepRes || '');
     const usuario = semAcento(String(f.get('usuario') || '').trim()).replace(/\s+/g, '');
     const codigo = String(f.get('codigo') || '').trim();
     const id = novo ? semAcento(v.nome).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : p.id;
@@ -876,6 +931,7 @@ function editaPromotor(p) {
     const b = $('#ep-s'); b.disabled = true; b.textContent = 'Salvando…';
     try {
       await setDoc(doc(db, 'promotores', id), v, { merge: true });
+      if (mudouCasa) localizaCasa(Object.assign({ id }, v));
       if (novaFoto) await setDoc(doc(db, 'rostos', id), { foto: novaFoto.foto, desc: novaFoto.desc, atualizado: Date.now() });
       if (mexeuAcesso) await salvaAcesso(id, a, usuario, codigo);
       fechaModal(); toast(mexeuAcesso ? `Salvo. ${v.nome.split(' ')[0]} entra com login ${usuario} e senha ${codigo}.` : 'Promotor salvo', 6000);
@@ -997,6 +1053,22 @@ async function escreveEmLotes(ops, progresso) {
 async function importar(arq) {
   const box = $('#cf-imp'); let d;
   try { d = JSON.parse(await arq.text()); } catch (e) { box.innerHTML = '<div class="note crit">Arquivo inválido.</div>'; return; }
+  if (d.formato === 'promotores-v1') {
+    const itens = Object.entries(d.itens || {}).filter(([pid]) => S.promotores.some(p => p.id === pid));
+    if (!(await confirma(`Completar a ficha de ${itens.length} promotores com os dados do ${d.fonte || 'arquivo'}? Endereço residencial é gravado; telefone e e-mail só onde estiverem vazios.`, 'Completar fichas'))) return;
+    const linhas = [];
+    for (let i = 0; i < itens.length; i++) {
+      const [pid, x] = itens[i]; const p = S.promotores.find(y => y.id === pid); const c = x.campos || {}; const upd = {};
+      ['endereco', 'cidadeRes', 'ufRes', 'cepRes'].forEach(k => { if (c[k]) upd[k] = c[k]; });
+      ['telefone', 'email', 'nascimento', 'admissao'].forEach(k => { if (c[k] && !p[k]) upd[k] = c[k]; });
+      box.innerHTML = `<div class="note">Atualizando ${i + 1} de ${itens.length} (${h(p.nome.split(' ')[0])}) e localizando a casa no mapa…</div>`;
+      try { await updateDoc(doc(db, 'promotores', pid), Object.assign(upd, { atualizado: Date.now() })); const casa = await localizaCasa(Object.assign({}, p, upd, { id: pid })); linhas.push([p.nome, Object.keys(upd).filter(k => k !== 'atualizado').length, casa ? (casa.nivel === 'rua' ? 'pela rua' : 'aproximada') : 'não localizada']); }
+      catch (e) { linhas.push([p.nome, 'erro: ' + erroMsg(e), '—']); }
+      await new Promise(r => setTimeout(r, 1100));
+    }
+    box.innerHTML = `<div class="note ok"><b>Fichas completadas.</b></div><table style="font-size:13px"><thead><tr><th>Promotor</th><th class="r">Campos gravados</th><th>Casa no mapa</th></tr></thead><tbody>${linhas.map(([a, b, c]) => `<tr><td>${h(a)}</td><td class="r">${h(String(b))}</td><td>${h(c)}</td></tr>`).join('')}</tbody></table>`;
+    return;
+  }
   if (d.formato === 'vendas-v1') {
     const tv = Object.values(d.itens || {}).reduce((s, x) => s + (+x.v || 0), 0);
     if (!(await confirma(`Importar vendas de ${d.mes}: ${Object.keys(d.itens || {}).length} clientes, ${brl(tv)} de venda? Substitui as vendas já gravadas desse mês.`, 'Importar'))) return;
