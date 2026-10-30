@@ -204,3 +204,9 @@ tr.click:hover td{background:var(--sunk)}
 .pin-p img,.pin-p span{width:40px;height:40px;border-radius:50%;object-fit:cover;border:3px solid var(--anel);box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;color:#fff;font:700 13px var(--f-body,sans-serif);background:#fff}
 .pin-p b{font:700 11px var(--f-body,sans-serif);background:rgba(23,25,37,.85);color:#fff;padding:1px 6px;border-radius:8px;white-space:nowrap}
 .pin-p.vivo img,.pin-p.vivo span{animation:pulso 1.4s infinite}
+
+/* termos */
+.termo{white-space:pre-wrap;font-size:13px;line-height:1.5;max-height:42vh;overflow-y:auto;background:var(--sunk);border-radius:10px;padding:12px;border:1px solid var(--line)}
+.ck{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4}
+.ck input{width:22px;height:22px;flex:none;margin-top:1px;accent-color:var(--brand-y)}
+.ck.destaque{background:var(--warn-soft);border-radius:10px;padding:10px}

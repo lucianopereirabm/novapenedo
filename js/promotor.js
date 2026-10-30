@@ -6,6 +6,7 @@ import {
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
 import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
+import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -13,7 +14,7 @@ const MOTIVOS = ['Loja fechada', 'Sem acesso / recebimento', 'Falta de tempo', '
 const TIPOS = [['chegada', 'Chegada'], ['antes', 'Gôndola antes'], ['depois', 'Gôndola depois'], ['extra', 'Foto extra']];
 
 const S = { rosto: null, uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
-const show = id => ['carregando', 'v-login', 'v-semacesso', 'v-rota', 'v-rosto'].forEach(x => $('#' + x).hidden = x !== id);
+const show = id => ['carregando', 'v-login', 'v-semacesso', 'v-rota', 'v-rosto', 'v-termos'].forEach(x => $('#' + x).hidden = x !== id);
 
 /* ---------- login ---------- */
 const pins = [0, 1, 2, 3].map(i => $('#pin-' + i));
@@ -64,6 +65,13 @@ async function iniciar() {
   try { const r = await getDoc(doc(db, 'rostos', S.pid)); if (r.exists()) { ref = r.data(); lsSet('np.rosto.' + S.pid, JSON.stringify({ desc: ref.desc })); } }
   catch (e) { try { ref = JSON.parse(lsGet('np.rosto.' + S.pid) || 'null'); } catch (e2) {} }
   S.rosto = ref && Array.isArray(ref.desc) ? ref.desc : null;
+  // termos do primeiro acesso
+  let assinou = lsGet('np.termo.' + S.pid) === VERSAO;
+  if (!assinou) {
+    try { const t = await getDocs(query(collection(db, 'termos'), where('promotorId', '==', S.pid))); assinou = t.docs.some(d => d.data().versao === VERSAO); if (assinou) lsSet('np.termo.' + S.pid, VERSAO); }
+    catch (e) { assinou = true; } // sem sinal no primeiro acesso: segue e pede na próxima vez
+  }
+  if (!assinou) return telaTermos();
   let ok = false; try { const x = JSON.parse(sessionStorage.getItem('np.rok') || 'null'); ok = x && x.pid === S.pid && Date.now() - x.t < 12 * 3600e3; } catch (e) {}
   if (!S.rosto || ok) return abreApp();
   portaoRosto();
@@ -112,6 +120,59 @@ function portaoRosto() {
       catch (e) { $('#sp-m').textContent = erroMsg(e); }
     };
   };
+}
+/* ---------- termos: LGPD + uso do aparelho, assinados com a foto ---------- */
+async function telaTermos() {
+  show('v-termos'); window.scrollTo(0, 0);
+  const T = { propriedade: '', numero: '', cpf: '', aparelho: await infoAparelho(), empresa: 'Nova Penedo Distribuidora', cnpj: '', contato: '', nome: '' };
+  try { const c = await getDoc(doc(db, 'config', 'app')); if (c.exists()) { const x = c.data(); if (x.empresa) T.empresa = x.empresa; T.cnpj = x.cnpj || ''; T.contato = x.contato || ''; } } catch (e) {}
+  try { const p = await getDoc(doc(db, 'promotores', S.pid)); if (p.exists()) T.nome = p.data().nome; } catch (e) {}
+  $('#tm-nome').value = T.nome;
+  const A = T.aparelho;
+  $('#tm-ap').innerHTML = `Aparelho identificado: <b>${h(A.modelo || 'modelo não informado pelo celular')}</b> · ${h(A.sistema)} · ${h(A.navegador)} · código ${h(A.id)}`;
+  const atualiza = () => { $('#tm-lgpd').textContent = termoLGPD(T); $('#tm-apar').textContent = T.propriedade ? termoAparelho(T) : 'Escolha acima se o celular é da empresa ou seu para ver o termo.'; };
+  atualiza();
+  document.querySelectorAll('#tm-prop .chip').forEach(b => b.onclick = () => { T.propriedade = b.dataset.v; document.querySelectorAll('#tm-prop .chip').forEach(x => x.setAttribute('aria-pressed', String(x === b))); atualiza(); });
+  $('#tm-num').oninput = e => { T.numero = e.target.value.trim(); atualiza(); };
+  $('#tm-cpf').oninput = e => { const d = e.target.value.replace(/\D/g, '').slice(0, 11); e.target.value = d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/(\d{3})\.(\d{3})\.(\d{3})(\d)/, '$1.$2.$3-$4'); T.cpf = e.target.value; atualiza(); };
+  carregaRosto().catch(() => {});
+  const msg = t => $('#tm-msg').innerHTML = t;
+  $('#tm-ok').onclick = async () => {
+    if (!$('#tm-c1').checked || !$('#tm-c2').checked) return msg('<span style="color:var(--crit)">Marque as duas autorizações do termo 1.</span>');
+    if (!T.propriedade) return msg('<span style="color:var(--crit)">Escolha se o celular é da empresa ou seu.</span>');
+    if (T.numero.replace(/\D/g, '').length < 10) return msg('<span style="color:var(--crit)">Informe o número da linha com DDD.</span>');
+    if (!$('#tm-c3').checked) return msg('<span style="color:var(--crit)">Marque que concorda com o termo do aparelho.</span>');
+    if (!cpfValido(T.cpf)) return msg('<span style="color:var(--crit)">CPF inválido. Confira os números.</span>');
+    const b = $('#tm-ok'); b.disabled = true;
+    try {
+      b.textContent = 'Abrindo a câmera…';
+      const cv = await tiraFoto({ frontal: true, titulo: 'Foto para assinar os termos' });
+      if (!cv) return;
+      b.textContent = 'Conferindo o rosto…';
+      let r = null; try { r = await leRosto(cv); } catch (e) {}
+      if (!r) return msg('<span style="color:var(--crit)">Não encontrei seu rosto na foto. Tire de novo, de frente e com boa luz.</span>');
+      const d = S.rosto ? distRosto(r.desc, S.rosto) : null;
+      if (d != null && d > LIMITE) return msg('<span style="color:var(--crit)">A foto não confere com o rosto do cadastro. Só o(a) próprio(a) promotor(a) pode assinar.</span>');
+      b.textContent = 'Pegando a localização…';
+      let gps = null; try { gps = await pegaGPS(20000); } catch (e) {}
+      const t1 = termoLGPD(T), t2 = termoAparelho(T);
+      const reg = { promotorId: S.pid, uid: S.uid, versao: VERSAO, nome: T.nome, cpf: T.cpf, empresa: T.empresa, cnpj: T.cnpj, contato: T.contato,
+        propriedade: T.propriedade, numero: T.numero, aparelho: T.aparelho, textoLgpd: t1, textoAparelho: t2, hashLgpd: await hashTexto(t1), hashAparelho: await hashTexto(t2),
+        consentimentoDados: true, consentimentoBiometria: true, aceiteAparelho: true, assinadoEm: Date.now(), recebido: serverTimestamp(), gps,
+        selfie: await comprime(cv, 45000), rostoDist: d, rostoConferido: d != null };
+      b.textContent = 'Gravando…';
+      grava(setDoc(doc(db, 'termos', S.pid + '_' + VERSAO), reg));
+      lsSet('np.termo.' + S.pid, VERSAO);
+      try { sessionStorage.setItem('np.rok', JSON.stringify({ pid: S.pid, t: Date.now() })); } catch (e) {}
+      msgSalvo('Termos assinados');
+      abreApp();
+    } finally { b.disabled = false; b.textContent = 'Assinar com minha foto'; }
+  };
+}
+function cpfValido(c) {
+  const d = String(c).replace(/\D/g, ''); if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
+  const dv = n => { let s = 0; for (let i = 0; i < n; i++) s += +d[i] * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+  return dv(9) === +d[9] && dv(10) === +d[10];
 }
 function abreApp() {
   show('v-rota');

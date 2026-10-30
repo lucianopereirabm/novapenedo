@@ -6,6 +6,7 @@ import {
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
 import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
+import { VERSAO } from './termos.js';
 
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
@@ -13,7 +14,7 @@ const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com 
 const CORES = ['#E0457B', '#2F80ED', '#27AE60', '#F2994A', '#9B51E0', '#00A3A3', '#B8860B', '#EB5757', '#56CCF2', '#6FCF97', '#BB6BD9', '#333F99'];
 const LOGO = 'img/logo.png';
 
-const S = { rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
+const S = { termos: {}, empresa: {}, rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
   tab: lsGet('np.g.tab') || 'painel', pronto: { p: false, l: false } };
 const secoes = ['painel', 'montar', 'cli', 'var', 'equipe', 'config'];
 
@@ -38,9 +39,10 @@ function iniciar() {
   onSnapshot(collection(db, 'promotores'), s => { S.promotores = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.nome.localeCompare(b.nome)); S.pronto.p = true; render(); }, e => toast(erroMsg(e)));
   onSnapshot(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
   onSnapshot(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; if (['equipe', 'painel'].includes(S.tab)) render(); }, () => {});
+  onSnapshot(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
   onSnapshot(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
   onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
-  onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
+  onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
   onSnapshot(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
   document.querySelectorAll('.side-item').forEach(b => b.onclick = () => { S.tab = b.dataset.go; lsSet('np.g.tab', S.tab); mostra(); window.scrollTo(0, 0); });
   if (!secoes.includes(S.tab)) S.tab = 'painel';
@@ -550,13 +552,14 @@ function renderEquipe() {
   if (vazioCarregando()) { c.innerHTML = '<div class="empty">Carregando…</div>'; return; }
   c.innerHTML = `<div class="spread"><h2>Equipe e acessos</h2><button class="btn primary" id="eq-novo">+ Novo promotor</button></div>
     <div class="note">O promotor entra no app com o <b>login</b> e a <b>senha</b> abaixo. Para mudar, clique em <b>Editar</b>. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
-    <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th></th></tr></thead><tbody>
+    <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th>Termos</th><th></th></tr></thead><tbody>
     ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 40)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
       <td style="font-size:13px">${h(p.telefone || '')}<div class="muted">${h(p.email || '')}</div></td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
-      <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td>
+      <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
       <td class="r"><button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
+  c.querySelectorAll('[data-tm]').forEach(b => b.onclick = () => pdfTermos(S.termos[b.dataset.tm]));
   c.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => editaPromotor(S.promotores.find(p => p.id === b.dataset.ed)));
 }
 function sugereUsuario(nome, pid) { const base = usuarioDeNome(nome) || 'promotor'; let u = base, n = 2; while (Object.entries(S.acessos).some(([k, x]) => x.usuario === u && k !== pid)) u = base + n++; return u; }
@@ -579,9 +582,12 @@ function editaPromotor(p) {
     <label class="field"><span>Telefone</span><input type="tel" name="telefone" value="${h(p.telefone || '')}"></label>
     <label class="field"><span>E-mail</span><input type="email" name="email" value="${h(p.email || '')}"></label>
     <label class="field"><span>Situação</span><select name="ativo"><option value="1" ${p.ativo !== false ? 'selected' : ''}>Ativo</option><option value="" ${p.ativo === false ? 'selected' : ''}>Inativo (não aparece nas rotas e não entra no app)</option></select></label>
+    ${!novo ? `<div class="note ${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? 'ok' : 'warn'}" style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<span>Termos LGPD e do aparelho assinados em ${new Date(S.termos[p.id].assinadoEm).toLocaleString('pt-BR')}</span><span class="row" style="gap:6px"><button type="button" class="btn sm" id="ep-tpdf">Baixar PDF</button><button type="button" class="btn sm ghost danger" id="ep-tre">Pedir nova assinatura</button></span>` : '<span>Termos ainda não assinados. O app pede a assinatura no primeiro acesso do promotor.</span>'}</div>` : ''}
     <div id="ep-msg"></div>
     <div class="row end"><button class="btn primary" type="submit" id="ep-s">Salvar</button></div></form>`);
   $('#ep-x').onclick = fechaModal;
+  const tp = $('#ep-tpdf'); if (tp) tp.onclick = () => pdfTermos(S.termos[p.id]);
+  const tr = $('#ep-tre'); if (tr) tr.onclick = async () => { const t = S.termos[p.id]; if (await confirma(`Apagar a assinatura atual de ${p.nome.split(' ')[0]}? Antes, baixe o PDF para arquivo. No próximo acesso o app pede para assinar de novo.`, 'Apagar e pedir de novo')) deleteDoc(doc(db, 'termos', t.id)).then(() => toast('Assinatura apagada. O app vai pedir de novo.'), e => toast(erroMsg(e))); };
   let novaFoto = null;
   $('#ep-arq').onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return; const fm = $('#ep-fmsg');
@@ -645,6 +651,34 @@ async function gravaAcesso(pid, usuario, codigo, codigoAntigo) {
   return uid;
 }
 
+// PDF dos termos assinados, com a foto da assinatura e os dados do registro
+async function pdfTermos(t) {
+  if (!t) return; const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
+  const logo = await carregaImg(LOGO).catch(() => null);
+  const d = new J({ unit: 'mm', format: 'a4' }); const W = 210, M = 16; let y = 0;
+  const topo = () => { d.setFillColor(23, 25, 37); d.rect(0, 0, W, 22, 'F'); d.setFillColor(244, 188, 28); d.rect(0, 22, W, 1.4, 'F'); if (logo) try { d.addImage(logo, 'PNG', M, 5, 62, 11.9); } catch (e) {} d.setTextColor(255, 255, 255); d.setFontSize(8.5); d.text('TERMOS ASSINADOS · versão ' + t.versao, W - M, 13.5, { align: 'right' }); d.setTextColor(23, 25, 37); y = 32; };
+  const texto = (tx, tam = 9.2) => { d.setFontSize(tam); d.setFont(undefined, 'normal'); tx.split('\n').forEach((par, i) => { const negrito = i === 0 || /^\d+\. [^a-z]+$/.test(par.trim()); d.setFont(undefined, negrito ? 'bold' : 'normal'); d.splitTextToSize(par || ' ', W - 2 * M).forEach(l => { if (y > 280) { d.addPage(); topo(); } d.text(l, M, y); y += tam * 0.47; }); }); };
+  topo(); texto(t.textoLgpd); y += 4;
+  d.setFontSize(9.2); d.setFont(undefined, 'bold'); d.text('[X] Li e concordo com o tratamento dos meus dados descritos acima.', M, y); y += 5; d.text('[X] Autorizo, de forma específica, o uso da imagem do meu rosto e da biometria facial.', M, y);
+  d.addPage(); topo(); texto(t.textoAparelho); y += 4; d.setFont(undefined, 'bold'); d.text('[X] Li e concordo com o termo de uso do aparelho.', M, y); y += 10;
+  if (y > 200) { d.addPage(); topo(); }
+  d.setFillColor(241, 242, 245); d.roundedRect(M, y, W - 2 * M, 74, 2, 2, 'F'); const y0 = y + 7;
+  d.setFont(undefined, 'bold'); d.setFontSize(11); d.text('REGISTRO DA ASSINATURA ELETRÔNICA', M + 4, y0);
+  if (t.selfie) try { const ip = d.getImageProperties(t.selfie); let w = 46, hh = w * ip.height / ip.width; if (hh > 62) { hh = 62; w = hh * ip.width / ip.height; } d.addImage(t.selfie, 'JPEG', W - M - 4 - w, y0 - 3, w, hh); } catch (e) {}
+  const ref = S.rostos[t.promotorId]; if (ref && ref.foto) try { d.addImage(ref.foto, 'JPEG', W - M - 74, y0 - 3, 22, 22); d.setFontSize(6.5); d.setFont(undefined, 'normal'); d.text('foto do cadastro', W - M - 74, y0 + 22); } catch (e) {}
+  const A = t.aparelho || {}; const rec = t.recebido && t.recebido.toMillis ? new Date(t.recebido.toMillis()).toLocaleString('pt-BR') : '—';
+  const L = [['Assinado por', `${t.nome} · CPF ${t.cpf}`], ['Data e hora no celular', new Date(t.assinadoEm).toLocaleString('pt-BR')], ['Recebido no sistema', rec],
+    ['Localização', t.gps ? `${t.gps.lat.toFixed(6)}, ${t.gps.lng.toFixed(6)} (precisão ${t.gps.prec} m)` : 'não disponível'],
+    ['Aparelho', `${A.modelo || 'modelo não informado'} · ${A.sistema || ''} · ${A.navegador || ''}`], ['Código do aparelho', `${A.id || '—'} · tela ${A.tela || '—'}`],
+    ['Linha / propriedade', `${t.numero} · ${t.propriedade === 'empresa' ? 'aparelho da empresa' : 'aparelho particular'}`],
+    ['Conferência do rosto', t.rostoConferido ? `confere com o cadastro (diferença ${n2(t.rostoDist)}; limite ${n2(LIMITE)})` : 'sem foto de cadastro na data; selfie registrada'],
+    ['Login no app', (Object.values(S.acessos).find(a => a.uid === t.uid) || {}).usuario || t.uid],
+    ['Código de integridade (SHA-256)', 'LGPD ' + (t.hashLgpd || '').slice(0, 24) + '…  Aparelho ' + (t.hashAparelho || '').slice(0, 24) + '…']];
+  let yy = y0 + 7; L.forEach(([k, v]) => { d.setFontSize(7.2); d.setFont(undefined, 'normal'); d.setTextColor(92, 96, 112); d.text(k.toUpperCase(), M + 4, yy); d.setFontSize(8.6); d.setTextColor(23, 25, 37); d.text(d.splitTextToSize(String(v), W - 2 * M - 64)[0], M + 4, yy + 3.6); yy += 6.4; });
+  d.setFontSize(7.5); d.setTextColor(140, 144, 156); d.text('Documento gerado em ' + new Date().toLocaleString('pt-BR') + ' a partir do registro eletrônico do aplicativo Rota Nova Penedo.', M, 290);
+  d.save(`Termos ${t.nome.split(' ')[0]} ${new Date(t.assinadoEm).toISOString().slice(0, 10)}.pdf`);
+}
+
 /* =========================================================
    CONFIGURAÇÕES, IMPORTAR E COPIAR
    ========================================================= */
@@ -664,6 +698,11 @@ function renderConfig() {
       <label class="field"><span>Faturamento mínimo da rota (R$)</span><input type="number" id="cf-meta" step="1000" value="${S.regras.meta}"></label>
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
       <div><button class="btn primary" id="cf-salvar">Salvar</button></div></div>
+    <div class="card stack"><h3>Dados da empresa nos termos</h3><p class="muted" style="margin:0;font-size:14px">Aparecem nos termos de LGPD e do aparelho que o promotor assina no primeiro acesso.</p>
+      <label class="field"><span>Razão social</span><input type="text" id="cf-emp" value="${h(S.empresa.empresa || 'Nova Penedo Distribuidora')}"></label>
+      <label class="field"><span>CNPJ</span><input type="text" id="cf-cnpj" value="${h(S.empresa.cnpj || '')}"></label>
+      <label class="field"><span>Contato para assuntos de dados pessoais (e-mail ou telefone)</span><input type="text" id="cf-cont" value="${h(S.empresa.contato || '')}"></label>
+      <div><button class="btn primary" id="cf-emp-s">Salvar dados da empresa</button></div></div>
     <div class="card stack"><h3>Importar arquivo</h3><p class="muted" style="margin:0;font-size:14px">Cópia completa (migração ou restauração) ou vendas e trocas do mês que o Claude preparar.</p>
       <input type="file" id="cf-arq" accept=".json,application/json"><div id="cf-imp"></div></div>
     <div class="card stack"><h3>Cópia de segurança</h3><p class="muted" style="margin:0;font-size:14px">Baixa promotores, acessos, clientes, rotas, vendas e configurações num arquivo. Guarde no Google Drive, pasta Artefatos.</p><div><button class="btn" id="cf-bk">Baixar cópia</button></div></div>
@@ -673,6 +712,7 @@ function renderConfig() {
     try { await setDoc(doc(db, 'config', 'app'), { raio: +$('#cf-raio').value || 150 }, { merge: true }); await setDoc(doc(db, 'config', 'variavel'), { base: +$('#cf-base').value || 0, meta: +$('#cf-meta').value || 0, prop: $('#cf-prop').checked }); toast('Configurações salvas'); }
     catch (e) { toast(erroMsg(e)); }
   };
+  $('#cf-emp-s').onclick = () => setDoc(doc(db, 'config', 'app'), { empresa: $('#cf-emp').value.trim(), cnpj: $('#cf-cnpj').value.trim(), contato: $('#cf-cont').value.trim() }, { merge: true }).then(() => toast('Dados da empresa salvos'), e => toast(erroMsg(e)));
   $('#cf-arq').onchange = e => { const f = e.target.files[0]; if (f) importar(f); };
   $('#cf-bk').onclick = baixaCopia;
 }

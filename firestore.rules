@@ -31,6 +31,12 @@ service cloud.firestore {
     match /acessos/{id}    { allow read, write: if isAdmin(); }
     match /variavel/{id}   { allow read, write: if isAdmin(); }
     // Foto e traços do rosto (dado sensível): só o administrador e o próprio promotor
+    // Termos assinados (LGPD e aparelho): promotor só cria o próprio; não altera nem apaga
+    match /termos/{tid} {
+      allow read: if isAdmin() || (isEquipe() && resource.data.promotorId == meuPromotor());
+      allow create: if isAdmin() || (isEquipe() && request.resource.data.promotorId == meuPromotor());
+      allow update, delete: if isAdmin();
+    }
     match /rostos/{pid}    { allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid); allow write: if isAdmin(); }
 
     // Visitas do dia: promotor só cria/altera as próprias

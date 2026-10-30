@@ -36,6 +36,25 @@
     <p class="muted" style="font-size:13px;text-align:center">O login e a senha são digitados pelo supervisor no primeiro acesso deste celular. Depois, o app abre pelo reconhecimento do rosto.<br><a href="gestao.html" class="btn ghost">Acesso da gestão</a></p>
   </section>
 
+  <!-- TERMOS (primeiro acesso) -->
+  <section id="v-termos" class="stack" hidden>
+    <div><div class="label">Primeiro acesso</div><h2 style="font-size:24px">Termos para usar o aplicativo</h2><p class="muted" style="margin:4px 0 0;font-size:14px">Leia os dois termos, preencha os dados e assine com uma foto do seu rosto.</p></div>
+    <div class="card stack"><h3>1. Proteção de dados (LGPD)</h3><div class="termo" id="tm-lgpd"></div>
+      <label class="ck"><input type="checkbox" id="tm-c1"> Li e concordo com o tratamento dos meus dados descritos acima.</label>
+      <label class="ck destaque"><input type="checkbox" id="tm-c2"> <span><b>Autorizo, de forma específica,</b> o uso da imagem do meu rosto e dos meus traços faciais (biometria) para confirmar minha identidade no aplicativo.</span></label></div>
+    <div class="card stack"><h3>2. Uso do aparelho celular</h3>
+      <div class="field"><span>Este celular é</span><div class="chips" id="tm-prop"><button class="chip" data-v="empresa" aria-pressed="false">Da empresa</button><button class="chip" data-v="proprio" aria-pressed="false">Meu (particular)</button></div></div>
+      <label class="field"><span>Número da linha deste celular</span><input type="tel" id="tm-num" placeholder="(24) 9 9999-9999" inputmode="tel"></label>
+      <div class="note" id="tm-ap"></div>
+      <div class="termo" id="tm-apar"></div>
+      <label class="ck"><input type="checkbox" id="tm-c3"> Li e concordo com o termo de uso do aparelho.</label></div>
+    <div class="card stack"><h3>3. Seus dados e assinatura</h3>
+      <label class="field"><span>Nome completo</span><input type="text" id="tm-nome" readonly></label>
+      <label class="field"><span>CPF</span><input type="text" id="tm-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14"></label>
+      <div id="tm-msg" class="muted" style="font-size:13px;min-height:18px"></div>
+      <button class="btn primary big" id="tm-ok">Assinar com minha foto</button></div>
+  </section>
+
   <!-- RECONHECIMENTO DO ROSTO -->
   <section id="v-rosto" class="stack" hidden>
     <div><div class="label">Confirme que é você</div><h2 id="ro-nome" style="font-size:26px"></h2></div>
