@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-10-30.10';
+const VERSAO_GESTAO = '2026-10-30.11';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Panco', 'Pão de forma Plus Vita'];
@@ -49,6 +49,7 @@ function iniciar() {
   escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
   escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
   escuta(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.tab === 'config') render(); }, () => {});
+  escuta(doc(db, 'config', 'rotasBackup'), s => { S.bkRotas = s.exists() ? s.data() : null; if (S.tab === 'montar') render(); }, () => {});
   escuta(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
@@ -501,7 +502,7 @@ function renderMontar() {
   const c = $('#v-montar');
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
-    c.innerHTML = `<h2>Montar rotas</h2>
+    c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:8px"><h2 style="margin:0">Montar rotas</h2><div class="row" style="gap:6px"><button class="btn sm" id="m-restaura" hidden>Desfazer última limpeza</button><button class="btn sm danger" id="m-limpa">Excluir rota…</button></div></div>
       <div class="card stack"><div class="spread"><h3>Visão da semana</h3><span class="muted" style="font-size:13px">Clientes por dia · clique para editar</span></div><div class="table-wrap" id="m-semana"></div></div>
       <div class="row" style="align-items:end"><label class="field" style="flex:1 1 240px"><span>Promotor</span><select id="m-prom"></select></label>
       <div class="field" style="flex:2 1 320px"><span>Dia da semana</span><div class="chips" id="m-dias"></div></div></div>
@@ -509,10 +510,13 @@ function renderMontar() {
       <div class="card stack"><h3>Adicionar clientes</h3><input type="text" id="m-busca" placeholder="Buscar por código, nome, bairro ou cidade" autocomplete="off"><div id="m-res" style="max-height:70vh;overflow-y:auto"></div></div></div>`;
     $('#m-dias').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip" data-d="${d}" aria-pressed="false">${DIAS[d]}</button>`).join('');
     $('#m-dias').querySelectorAll('.chip').forEach(b => b.onclick = () => { M.wd = +b.dataset.d; lsSet('np.m.dia', M.wd); renderMontar(); });
+    $('#m-limpa').onclick = limparRota;
+    $('#m-restaura').onclick = restauraRota;
     $('#m-prom').onchange = e => { M.pid = e.target.value; lsSet('np.m.prom', M.pid); renderMontar(); };
     let t = null; $('#m-busca').oninput = () => { clearTimeout(t); t = setTimeout(renderBusca, 150); };
   }
   if (vazioCarregando()) return;
+  const bk = S.bkRotas; const br = $('#m-restaura'); br.hidden = !bk; if (bk) br.title = `Volta como estava antes de: ${bk.desc} (${new Date(bk.em).toLocaleString('pt-BR')})`;
   const ps = S.promotores.filter(p => p.ativo !== false);
   $('#m-semana').innerHTML = `<table class="semana num"><thead><tr><th>Promotor</th>${[1, 2, 3, 4, 5, 6].map(d => `<th>${DIAS[d]}</th>`).join('')}<th>Clientes</th></tr></thead><tbody>${ps.map(p => `<tr><td>${h(p.nome.split(' ').slice(0, 2).join(' '))}</td>${[1, 2, 3, 4, 5, 6].map(d => { const n = lojasDoDiaWd(p.id, d).length; return `<td><button class="${n ? '' : 'zero'} ${p.id === M.pid && d === M.wd ? 'on' : ''}" data-sp="${h(p.id)}" data-sd="${d}">${n || '–'}</button></td>`; }).join('')}<td>${S.lojas.filter(l => l.promotorId === p.id).length}</td></tr>`).join('')}</tbody></table>`;
   $('#m-semana').querySelectorAll('[data-sp]').forEach(b => b.onclick = () => { M.pid = b.dataset.sp; M.wd = +b.dataset.sd; lsSet('np.m.prom', M.pid); lsSet('np.m.dia', M.wd); renderMontar(); });
@@ -551,6 +555,54 @@ function renderBusca() {
       ${naRota ? '<span class="tag y">Na rota</span>' : `<button class="btn sm ${outro ? '' : 'primary'}" data-add="${h(l.id)}">Adicionar</button>`}</div>`;
   }).join('') + (itens.length > 60 ? `<div class="muted" style="font-size:13px;padding-top:8px">Mostrando 60 de ${itens.length}. Refine a busca.</div>` : '');
   r.querySelectorAll('[data-add]').forEach(b => b.onclick = () => adicionaNaRota(S.lojas.find(l => l.id === b.dataset.add)));
+}
+// Excluir rota: tira os dias (e, se marcado, o promotor) dos clientes. Antes, guarda uma cópia para poder desfazer.
+function limparRota() {
+  const nome = M.pid ? promNome(M.pid) : '';
+  abreModal(`<div class="spread"><h3>Excluir rota</h3><button class="btn ghost" id="lr-x">Fechar</button></div>
+    <label class="field"><span>De quem</span><select id="lr-quem">${M.pid ? `<option value="um">Só de ${h(nome)}</option>` : ''}<option value="todos">De todos os promotores</option></select></label>
+    <label class="field"><span>Quais dias</span><select id="lr-dia"><option value="todos">A semana toda</option><option value="um">Só ${DIAS_LONGO[M.wd]}</option></select></label>
+    <label class="ck"><input type="checkbox" id="lr-cart"> <span>Tirar também os clientes da carteira do promotor <span class="muted">(eles deixam de contar na variável dele até serem colocados de novo)</span></span></label>
+    <div class="note" id="lr-res"></div>
+    <div class="note warn" style="font-size:13px">Antes de excluir, o sistema guarda uma cópia: o botão <b>Desfazer última limpeza</b> volta tudo como estava. As visitas já feitas não são apagadas.</div>
+    <div class="row end"><button class="btn" id="lr-c">Cancelar</button><button class="btn primary danger" id="lr-s">Excluir</button></div>`);
+  const alvo = () => {
+    const quem = $('#lr-quem').value, dia = $('#lr-dia').value, cart = $('#lr-cart').checked;
+    const ls = S.lojas.filter(l => (quem === 'todos' ? !!l.promotorId : l.promotorId === M.pid) && (dia === 'todos' ? ((l.dias || []).length || cart) : (l.dias || []).map(Number).includes(M.wd)));
+    return { quem, dia, cart, ls };
+  };
+  const mostra = () => { const a = alvo(); $('#lr-res').innerHTML = `<b>${a.ls.length}</b> cliente(s) serão tirados da rota${a.dia === 'um' ? ' de ' + DIAS_LONGO[M.wd] : ''}${a.quem === 'todos' ? ' de todos os promotores' : ' de ' + h(nome)}${a.cart ? ' e da carteira do promotor' : ''}.`; };
+  ['#lr-quem', '#lr-dia', '#lr-cart'].forEach(id => $(id).onchange = mostra); mostra();
+  $('#lr-x').onclick = $('#lr-c').onclick = fechaModal;
+  $('#lr-s').onclick = async () => {
+    const a = alvo(); if (!a.ls.length) return toast('Nada para excluir.');
+    const b = $('#lr-s'); b.disabled = true; b.textContent = 'Guardando cópia…';
+    try {
+      const desc = `excluir rota ${a.quem === 'todos' ? 'de todos' : 'de ' + nome}${a.dia === 'um' ? ' (' + DIAS_LONGO[M.wd] + ')' : ''}${a.cart ? ' + carteira' : ''}`;
+      const copia = {}; a.ls.forEach(l => copia[l.id] = { promotorId: l.promotorId || '', dias: l.dias || [], ordemDia: l.ordemDia || {} });
+      await setDoc(doc(db, 'config', 'rotasBackup'), { em: Date.now(), desc, lojas: copia });
+      b.textContent = 'Excluindo…';
+      const ops = a.ls.map(l => {
+        let v;
+        if (a.dia === 'um') { const od = Object.assign({}, l.ordemDia); delete od[M.wd]; v = { dias: (l.dias || []).map(Number).filter(d => d !== M.wd), ordemDia: od }; }
+        else v = { dias: [], ordemDia: {} };
+        if (a.cart && (a.dia === 'todos' || !v.dias.length)) v.promotorId = '';
+        v.atualizado = Date.now(); return [l.id, v];
+      });
+      for (let i = 0; i < ops.length; i += 400) { const wb = writeBatch(db); ops.slice(i, i + 400).forEach(([id, v]) => wb.update(doc(db, 'lojas', id), v)); await wb.commit(); }
+      fechaModal(); toast(`${ops.length} cliente(s) tirados da rota. Agora é só montar a nova.`, 6000);
+    } catch (e) { b.disabled = false; b.textContent = 'Excluir'; toast(erroMsg(e), 6000); }
+  };
+}
+async function restauraRota() {
+  const bk = S.bkRotas; if (!bk) return;
+  if (!(await confirma(`Voltar as rotas como estavam antes de "${bk.desc}" (${new Date(bk.em).toLocaleString('pt-BR')})? Mudanças feitas depois nesses clientes serão substituídas.`, 'Desfazer'))) return;
+  try {
+    const ops = Object.entries(bk.lojas || {}).filter(([id]) => S.lojas.some(l => l.id === id));
+    for (let i = 0; i < ops.length; i += 400) { const wb = writeBatch(db); ops.slice(i, i + 400).forEach(([id, v]) => wb.update(doc(db, 'lojas', id), Object.assign({}, v, { atualizado: Date.now() }))); await wb.commit(); }
+    await deleteDoc(doc(db, 'config', 'rotasBackup'));
+    toast(`Rotas restauradas (${ops.length} clientes).`, 5000);
+  } catch (e) { toast(erroMsg(e), 6000); }
 }
 async function adicionaNaRota(l) {
   const pos = lojasDoDiaWd(M.pid, M.wd).length + 1;
