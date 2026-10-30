@@ -213,3 +213,7 @@ tr.click:hover td{background:var(--sunk)}
 .ck input{width:22px;height:22px;flex:none;margin-top:1px;accent-color:var(--brand-y)}
 .ck.destaque{background:var(--warn-soft);border-radius:10px;padding:10px}
 .tcard .st .pill{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:bottom;white-space:nowrap}
+
+#mapa.mapa-det{height:calc(100vh - 290px);min-height:420px}
+@media (min-width:1100px){.det-grid{grid-template-columns:minmax(0,3fr) minmax(0,2fr)}}
+.mk.aprox{border-style:dashed}

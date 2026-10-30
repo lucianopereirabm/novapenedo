@@ -140,7 +140,8 @@ function renderPainel() {
     box.dataset.modo = 'grade'; tiraMapa();
     box.innerHTML = `<div class="torre-wrap"><div class="stack" style="gap:10px"><div class="torre" id="p-cards"></div>
       <div class="muted" style="font-size:12px;display:flex;gap:14px;flex-wrap:wrap"><span><span class="pt ok lg"></span> concluída</span><span><span class="pt live lg"></span> em loja</span><span><span class="pt lg"></span> pendente</span><span><span class="pt no lg"></span> não visitada</span><span><span class="pt ok al lg"></span> com alerta</span><span>Clique no promotor para ver o detalhe.</span></div></div>
-      <div class="card mapa-geral stack" style="gap:8px"><div class="spread"><h3 style="margin:0">Onde está cada promotor</h3><span class="muted num" id="p-atual" style="font-size:12px"></span></div><div id="mapa"></div><div id="p-semgps" class="muted" style="font-size:12px"></div></div></div>`;
+      <div class="card mapa-geral stack" style="gap:8px"><div class="spread" style="flex-wrap:wrap;gap:6px"><h3 style="margin:0">Onde está cada promotor</h3><span class="row" style="gap:10px"><label class="row" style="gap:6px;font-size:13px"><input type="checkbox" id="p-rotas"> Rotas do dia</label><span class="muted num" id="p-atual" style="font-size:12px"></span></span></div><div id="mapa"></div>
+      <div class="row" style="gap:8px;font-size:12px" id="p-geo"></div><div id="p-semgps" class="muted" style="font-size:12px"></div></div></div>`;
   }
   $('#p-cards').innerHTML = dias.map(d => {
     const pct = d.programadas ? Math.round(d.feitas / d.programadas * 100) : 0;
@@ -151,6 +152,13 @@ function renderPainel() {
       <div class="spread muted num" style="font-size:12px"><span>${d.primeira ? 'Início ' + hm(d.primeira) : '—'}${d.ultimaSaida ? ' · última saída ' + hm(d.ultimaSaida) : ''}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
   }).join('');
   $('#p-cards').querySelectorAll('[data-p]').forEach(b => b.onclick = () => abreDetalhe(b.dataset.p));
+  const rt = $('#p-rotas'); rt.checked = lsGet('np.p.rotas') !== '0'; rt.onchange = () => { lsSet('np.p.rotas', rt.checked ? '1' : '0'); renderPainel(); };
+  const semPonto = [...new Set(dias.flatMap(d => d.paradas.filter(x => !x.extra).map(x => x.lojaId)))].map(id => S.lojas.find(l => l.id === id)).filter(l => l && !pontoLoja(l));
+  if (!G.rodando) $('#p-geo').innerHTML = semPonto.length ? `<span class="muted">${semPonto.length} lojas da rota de hoje sem ponto no mapa.</span><button class="btn sm" id="p-geo-b">Localizar pelo endereço</button>` : '';
+  const gb = $('#p-geo-b'); if (gb) gb.onclick = () => localizaLojas(semPonto, t => { const e = $('#p-geo'); if (e) e.innerHTML = t ? `<span class="muted">${t}</span>` : ''; });
+  // na primeira abertura, já localiza sozinho as lojas da rota que ainda não têm ponto
+  let tentou = false; try { tentou = sessionStorage.getItem('np.geo.' + P.data) === '1'; sessionStorage.setItem('np.geo.' + P.data, '1'); } catch (e) {}
+  if (gb && !tentou) setTimeout(() => { const b = $('#p-geo-b'); if (b) b.click(); }, 1500);
   $('#p-atual').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   mapaGeral(dias);
 }
@@ -181,12 +189,47 @@ function garanteMapa(chave) {
   return P.mapa;
 }
 function enquadra(pts) { if (P.ajustar && pts.length) { P.mapa.fitBounds(pts, { padding: [40, 40], maxZoom: 15 }); P.ajustar = false; } }
+// Ponto da loja no mapa: exato (check-in/manual) ou aproximado (pelo endereço). O raio do check-in usa só o exato.
+const pontoLoja = l => l && l.lat != null ? [+l.lat, +l.lng] : l && l.latAprox != null ? [+l.latAprox, +l.lngAprox] : null;
+const G = { rodando: false };
+async function geocodifica(l) {
+  const base = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=';
+  const tentativas = [[l.endereco, l.bairro, l.municipio, l.uf], [l.bairro, l.municipio, l.uf], [l.cidade, l.uf || 'RJ']].map(x => x.filter(Boolean).join(', ')).filter((x, i, a) => x && a.indexOf(x) === i);
+  for (let i = 0; i < tentativas.length; i++) {
+    const r = await fetch(base + encodeURIComponent(tentativas[i] + ', Brasil') + '&accept-language=pt-BR').then(r => r.ok ? r.json() : []).catch(() => []);
+    if (r && r[0]) return { latAprox: +(+r[0].lat).toFixed(6), lngAprox: +(+r[0].lon).toFixed(6), aproxNivel: ['rua', 'bairro', 'cidade'][Math.min(i, 2)] };
+    await new Promise(res => setTimeout(res, 1100));
+  }
+  return null;
+}
+// Localiza as lojas sem ponto (1 por segundo, regra do serviço gratuito de mapas)
+async function localizaLojas(lista, aviso) {
+  if (G.rodando) return toast('Já estou localizando as lojas. Aguarde.');
+  const falta = lista.filter(l => !pontoLoja(l) && (((l.endereco || l.bairro) && l.municipio) || l.cidade));
+  if (!falta.length) return toast('Todas essas lojas já estão no mapa.');
+  G.rodando = true; let ok = 0;
+  try {
+    for (let i = 0; i < falta.length; i++) {
+      if (aviso) aviso(`Localizando loja ${i + 1} de ${falta.length}…`);
+      const g = await geocodifica(falta[i]);
+      if (g) { ok++; await updateDoc(doc(db, 'lojas', falta[i].id), Object.assign(g, { aproxEm: Date.now() })).catch(() => {}); }
+      await new Promise(res => setTimeout(res, 1100));
+    }
+  } finally { G.rodando = false; P.ajustar = true; if (S.tab === 'painel') renderPainel(); }
+  if (aviso) aviso(''); toast(`${ok} de ${falta.length} lojas localizadas pelo endereço.${ok < falta.length ? ' As demais ganham o ponto no primeiro check-in.' : ''}`, 6000);
+}
 function mapaGeral(dias) {
   if (!window.L) { setTimeout(() => { if (!P.sel && S.tab === 'painel') mapaGeral(dias); }, 400); return; }
   const m = garanteMapa('geral|' + P.data); if (!m) return;
-  const pts = [], sem = [];
+  const pts = [], sem = [], planejados = [];
+  const verRotas = lsGet('np.p.rotas') !== '0';
   dias.forEach(d => {
     const cor = corDe(d.pid);
+    if (verRotas) {
+      const rota = d.paradas.filter(x => !x.extra).map(x => ({ x, p: pontoLoja(S.lojas.find(l => l.id === x.lojaId)) })).filter(y => y.p);
+      if (rota.length > 1) L.polyline(rota.map(y => y.p), { color: cor, weight: 2, opacity: .45, dashArray: '5 7' }).addTo(P.camada);
+      rota.forEach(y => { planejados.push(y.p); const v = y.x.v; L.circleMarker(y.p, { radius: 5, color: cor, weight: 2, fillColor: v && v.status === 'concluida' ? '#27AE60' : '#fff', fillOpacity: 1 }).bindTooltip(`${h(nomeCurto(d.pid))} · ${y.x.ordem}ª ${h(y.x.nome)}${v ? (v.status === 'concluida' ? ' · ' + hm(v.checkin) + '–' + hm(v.checkout) : v.status === 'em_loja' ? ' · em loja' : ' · não visitada') : ' · pendente'}`).addTo(P.camada); });
+    }
     const trilha = d.paradas.filter(x => x.v && x.v.gpsIn && x.v.status !== 'nao_visitada').sort((a, b) => a.v.checkin - b.v.checkin).map(x => [x.v.gpsIn.lat, x.v.gpsIn.lng]);
     if (trilha.length > 1) L.polyline(trilha, { color: cor, weight: 3, opacity: .55 }).addTo(P.camada);
     const u = ultimaPosicao(d); if (!u) { sem.push(nomeCurto(d.pid)); return; }
@@ -198,7 +241,7 @@ function mapaGeral(dias) {
       .bindTooltip(`<b>${h(nomeCurto(d.pid))}</b><br>${quando}<br>${d.feitas} de ${d.programadas} visitas`, { direction: 'top', offset: [0, -20] })
       .on('click', () => abreDetalhe(d.pid)).addTo(P.camada);
   });
-  enquadra(pts);
+  enquadra(pts.length ? pts.concat(planejados) : planejados);
   $('#p-semgps').textContent = sem.length ? 'Sem posição no dia: ' + sem.join(', ') + '.' : 'Foto do promotor na última posição registrada (anel laranja = em loja agora). Passe o mouse para ver os detalhes e clique para abrir o promotor.';
 }
 function renderDetalhe(d) {
@@ -213,9 +256,9 @@ function renderDetalhe(d) {
   if (box.dataset.modo !== 'det') {
     box.dataset.modo = 'det'; tiraMapa();
     box.innerHTML = `<div class="stack"><div id="p-dhead"></div><div id="p-dest"></div>
-      <div class="det-grid"><div id="mapa" style="height:460px"></div>
+      <div class="det-grid"><div class="stack" style="gap:6px"><div id="mapa" class="mapa-det"></div><div class="row" style="gap:8px;font-size:12px" id="p-dgeo"></div></div>
       <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou</th><th>Saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody id="p-dtab"></tbody></table></div></div></div>
-      <div class="muted" style="font-size:12px">Mapa: pontos numerados = check-ins na ordem em que aconteceram, linha verde = trajeto feito; círculos vazados = lojas da rota com local cadastrado. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
+      <div class="muted" style="font-size:12px">Mapa: números = ordem da rota do dia (verde concluída, laranja em loja, branco pendente, vermelho não visitada ou com alerta); tracejado = rota planejada; linha verde = caminho feito pelos check-ins (pontinhos). Lojas com ponto aproximado (pelo endereço) aparecem com borda tracejada. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
   }
   $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
       <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div></div></div>
@@ -231,16 +274,27 @@ function desenhaMapa(d) {
   if (!window.L) { setTimeout(() => { if (P.sel === d.pid) desenhaMapa(d); }, 400); return; }
   const m = garanteMapa('det|' + d.pid + '|' + P.data); if (!m) return;
   const pts = [];
-  d.paradas.forEach(x => { const l = S.lojas.find(y => y.id === x.lojaId); if (l && l.lat != null) { pts.push([+l.lat, +l.lng]); L.circleMarker([+l.lat, +l.lng], { radius: 7, color: '#2C7A47', weight: 2, fillOpacity: 0 }).bindPopup(`Loja: <b>${h(l.nome)}</b> (${h(l.codigo)})${x.ordem ? '<br>' + x.ordem + 'ª da rota' : ''}`).addTo(P.camada); } });
+  // rota planejada: lojas na ordem do dia
+  const rota = d.paradas.map(x => { const l = S.lojas.find(y => y.id === x.lojaId); return { x, l, p: pontoLoja(l), aprox: l && l.lat == null }; }).filter(y => y.p);
+  const plan = rota.filter(y => !y.x.extra);
+  if (plan.length > 1) L.polyline(plan.map(y => y.p), { color: '#5C6070', weight: 3, opacity: .7, dashArray: '8 8' }).addTo(P.camada);
+  // caminho feito: GPS dos check-ins em ordem de horário
   const feitos = d.paradas.filter(x => x.v && x.v.gpsIn).sort((a, b) => (a.v.checkin || a.v.registrado || 0) - (b.v.checkin || b.v.registrado || 0));
   if (feitos.length > 1) L.polyline(feitos.map(x => [x.v.gpsIn.lat, x.v.gpsIn.lng]), { color: '#27AE60', weight: 5, opacity: .85 }).addTo(P.camada);
-  feitos.forEach((x, i) => {
-    const v = x.v; const p = [v.gpsIn.lat, v.gpsIn.lng]; pts.push(p);
-    const cor = v.status === 'nao_visitada' ? '#999' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)) ? '#EB5757' : '#27AE60';
-    L.marker(p, { icon: L.divIcon({ className: '', html: `<div class="mk" style="background:${cor}">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
-      .bindPopup(`<b>${h(x.nome)}</b><br>${v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${v.distIn != null ? '<br>' + v.distIn + ' m da loja' : ''}`).addTo(P.camada);
+  feitos.forEach(x => { const v = x.v; const p = [v.gpsIn.lat, v.gpsIn.lng]; pts.push(p);
+    L.circleMarker(p, { radius: 5, color: '#fff', weight: 2, fillColor: '#27AE60', fillOpacity: 1 }).bindTooltip(`GPS do check-in · ${h(x.nome)} · ${hm(v.checkin || v.registrado)}${v.distIn != null ? ' · ' + v.distIn + ' m da loja' : ''}`).addTo(P.camada); });
+  rota.forEach(y => {
+    const v = y.x.v; pts.push(y.p);
+    const cor = !v ? '#fff' : v.status === 'nao_visitada' ? '#EB5757' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)) ? '#EB5757' : '#27AE60';
+    const txt = !v ? '#171925' : '#fff';
+    L.marker(y.p, { zIndexOffset: 500, icon: L.divIcon({ className: '', html: `<div class="mk${y.aprox ? ' aprox' : ''}" style="background:${cor};color:${txt}">${y.x.extra ? '+' : y.x.ordem}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
+      .bindPopup(`<b>${y.x.extra ? 'Fora da rota' : y.x.ordem + 'ª parada'} · ${h(y.x.nome)}</b><br>${!v ? 'Pendente' : v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${y.aprox ? '<br><i>ponto aproximado pelo endereço</i>' : ''}`).addTo(P.camada);
   });
   enquadra(pts);
+  const sem = d.paradas.filter(x => !x.extra).map(x => S.lojas.find(l => l.id === x.lojaId)).filter(l => l && !pontoLoja(l));
+  const el = $('#p-dgeo');
+  if (el && !G.rodando) el.innerHTML = sem.length ? `<span class="muted">${sem.length} de ${d.programadas} lojas sem ponto no mapa.</span><button class="btn sm" id="p-dgeo-b">Localizar pelo endereço</button>` : '';
+  const gb = $('#p-dgeo-b'); if (gb) gb.onclick = () => localizaLojas(sem, t => { const e = $('#p-dgeo'); if (e) e.innerHTML = t ? `<span class="muted">${t}</span>` : ''; });
 }
 // Mostra quando o registro feito no celular chegou ao sistema (registros sem sinal chegam depois)
 const ms = t => t && typeof t.toMillis === 'function' ? t.toMillis() : (typeof t === 'number' ? t : null);
