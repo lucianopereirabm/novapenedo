@@ -8,6 +8,7 @@ import {
 import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
+export const VERSAO_APP = '2026-10-30.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const MOTIVOS = ['Loja fechada', 'Sem acesso / recebimento', 'Falta de tempo', 'Outro'];
@@ -23,6 +24,7 @@ pins.forEach((el, i) => {
   el.addEventListener('keydown', e => { if (e.key === 'Backspace' && !el.value && i > 0) pins[i - 1].focus(); });
 });
 $('#lg-usuario').value = lsGet('np.usuario') || '';
+$('#versao').textContent = 'Versão do app ' + VERSAO_APP;
 $('#f-login').addEventListener('submit', async e => {
   e.preventDefault();
   const u = semAcento($('#lg-usuario').value.trim()).replace(/[^a-z0-9]/g, '');
@@ -63,13 +65,19 @@ async function iniciar() {
   try { const pr = await getDoc(doc(db, 'promotores', S.pid)); if (pr.exists() && pr.data().ativo === false) { show('v-semacesso'); $('#v-semacesso').innerHTML = '<b>Cadastro inativo</b>Seu cadastro está inativo. Fale com o supervisor.'; return; } } catch (e) {}
   let ref = null;
   try { const r = await getDoc(doc(db, 'rostos', S.pid)); if (r.exists()) { ref = r.data(); lsSet('np.rosto.' + S.pid, JSON.stringify({ desc: ref.desc })); } }
-  catch (e) { try { ref = JSON.parse(lsGet('np.rosto.' + S.pid) || 'null'); } catch (e2) {} }
+  catch (e) {
+    if (String(e && e.code).includes('permission')) return travado('Não consegui ler a foto do rosto no sistema (permissão). Avise o supervisor: as regras do banco precisam ser atualizadas.');
+    try { ref = JSON.parse(lsGet('np.rosto.' + S.pid) || 'null'); } catch (e2) {}
+  }
   S.rosto = ref && Array.isArray(ref.desc) ? ref.desc : null;
   // termos do primeiro acesso
   let assinou = lsGet('np.termo.' + S.pid) === VERSAO;
   if (!assinou) {
     try { const t = await getDocs(query(collection(db, 'termos'), where('promotorId', '==', S.pid))); assinou = t.docs.some(d => d.data().versao === VERSAO); if (assinou) lsSet('np.termo.' + S.pid, VERSAO); }
-    catch (e) { assinou = true; } // sem sinal no primeiro acesso: segue e pede na próxima vez
+    catch (e) {
+      if (String(e && e.code).includes('permission')) return travado('Não consegui conferir os termos no sistema (permissão). Avise o supervisor: as regras do banco precisam ser atualizadas.');
+      assinou = true; // sem sinal: segue e pede na próxima vez
+    }
   }
   if (!assinou) return telaTermos();
   let ok = false; try { const x = JSON.parse(sessionStorage.getItem('np.rok') || 'null'); ok = x && x.pid === S.pid && Date.now() - x.t < 12 * 3600e3; } catch (e) {}
@@ -169,6 +177,7 @@ async function telaTermos() {
     } finally { b.disabled = false; b.textContent = 'Assinar com minha foto'; }
   };
 }
+function travado(txt) { show('v-semacesso'); $('#v-semacesso').innerHTML = `<b>Não foi possível abrir</b>${h(txt)}<div style="margin-top:10px"><button class="btn" onclick="location.reload()">Tentar de novo</button></div>`; }
 function cpfValido(c) {
   const d = String(c).replace(/\D/g, ''); if (d.length !== 11 || /^(\d)\1+$/.test(d)) return false;
   const dv = n => { let s = 0; for (let i = 0; i < n; i++) s += +d[i] * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
@@ -234,6 +243,7 @@ function render() {
   }).join('') + '</div>';
   if (extras.length) html += '<div class="label">Fora da rota</div><div class="stops">' + extras.map(v => `<button class="stop" data-loja="${h(v.lojaId)}" data-fora="1"><span class="n">+</span><span class="t"><b>${h(v.lojaNome)}</b><span>${h(v.cidade || '')}</span></span>${statusPill(v)}</button>`).join('') + '</div>';
   html += `<button class="btn" id="b-fora">Visitar loja fora da rota de hoje</button>`;
+  html += `<p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
   c.innerHTML = html;
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora));
   $('#b-fora').onclick = buscaFora;

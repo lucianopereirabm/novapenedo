@@ -1,5 +1,5 @@
 // Service worker: guarda o app para abrir sem internet. Sempre tenta a rede primeiro.
-const CACHE = 'rota-np-v7';
+const CACHE = 'rota-np-v8';
 const ARQS = ['./', './index.html', './gestao.html', './css/app.css', './js/fb.js', './js/promotor.js', './js/gestao.js', './js/rosto.js', './js/termos.js', './lib/face-api.esm.js',
   './models/tiny_face_detector_model-weights_manifest.json', './models/tiny_face_detector_model.bin', './models/face_landmark_68_model-weights_manifest.json', './models/face_landmark_68_model.bin', './models/face_recognition_model-weights_manifest.json', './models/face_recognition_model.bin',
   './manifest.webmanifest', './img/icon-192.png', './img/icon-512.png', './img/logo.png', './img/logo-full.png'];
@@ -20,7 +20,7 @@ self.addEventListener('fetch', e => {
   if (!local && !lib) return; // Firestore, Auth e mapas passam direto
   // rede primeiro; se o sinal estiver fraco (mais de 4 s) ou sem internet, abre o que está guardado
   const doCache = () => caches.match(e.request).then(r => r || (e.request.mode === 'navigate' ? caches.match('./index.html') : null));
-  const rede = fetch(e.request).then(r => { if (r.ok) { const c = r.clone(); caches.open(CACHE).then(k => k.put(e.request, c)); } return r; });
+  const rede = fetch(local ? e.request.url : e.request, local ? { cache: 'no-cache' } : undefined).then(r => { if (r.ok) { const c = r.clone(); caches.open(CACHE).then(k => k.put(e.request, c)); } return r; });
   e.respondWith(new Promise(res => {
     let feito = false; const fim = r => { if (!feito && r) { feito = true; res(r); } };
     const t = setTimeout(() => doCache().then(fim), 4000);

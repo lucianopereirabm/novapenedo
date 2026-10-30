@@ -34,6 +34,7 @@
       <button class="btn primary big" type="submit" id="lg-btn">Entrar</button>
     </form>
     <p class="muted" style="font-size:13px;text-align:center">O login e a senha são digitados pelo supervisor no primeiro acesso deste celular. Depois, o app abre pelo reconhecimento do rosto.<br><a href="gestao.html" class="btn ghost">Acesso da gestão</a></p>
+    <p class="muted" style="font-size:11px;text-align:center" id="versao"></p>
   </section>
 
   <!-- TERMOS (primeiro acesso) -->
@@ -90,7 +91,12 @@
 
 <script type="module" src="js/promotor.js"></script>
 <script>
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+if ('serviceWorker' in navigator) {
+  // quando sair versão nova do app, troca e recarrega sozinho uma vez
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!recarregou) { recarregou = true; location.reload(); } });
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}));
+}
 </script>
 </body>
 </html>
