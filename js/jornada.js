@@ -8,25 +8,24 @@ export function regrasJornada(cfgApp) {
   return { carga, almocoMin: c.almocoMin ?? ALMOCO_PADRAO.min, almocoAcima: c.almocoAcima ?? ALMOCO_PADRAO.acimaDe };
 }
 
-// j = registro da jornada (início/fim tocados no app); vs = visitas do promotor no dia
-export function calcJornada({ j, vs = [], date, regras, agora = Date.now(), hoje }) {
+// Jornada = do primeiro check-in do dia até o check-out da última loja.
+// vs = visitas do promotor no dia. Em andamento (hoje, ainda em loja ou com rota pendente) conta até agora.
+export function calcJornada({ vs = [], date, regras, agora = Date.now(), hoje }) {
   const wd = new Date(date + 'T12:00:00').getDay();
   const esperado = (regras.carga[wd] || 0);
-  const ins = vs.map(v => v.checkin || v.registrado).filter(Boolean);
-  const outs = vs.map(v => v.checkout || (v.status === 'nao_visitada' ? v.registrado : null)).filter(Boolean);
+  const ins = vs.map(v => v.checkin).filter(Boolean);
+  if (!ins.length) return { tem: false, esperado, wd };
+  const inicio = Math.min(...ins);
+  const outs = vs.map(v => v.checkout).filter(Boolean);
   const emLoja = vs.some(v => v.status === 'em_loja');
-  let inicio = j && j.inicio, inicioEst = false;
-  if (!inicio && ins.length) { inicio = Math.min(...ins); inicioEst = true; }
-  let fim = j && j.fim, fimEst = false, andamento = false;
-  if (!fim && inicio) {
-    if (date === hoje) { fim = agora; andamento = true; }
-    else if (outs.length || ins.length) { fim = Math.max(...outs.concat(ins)); fimEst = true; }
-  }
-  if (!inicio) return { tem: false, esperado, wd };
+  let fim, andamento = false, fimEst = false;
+  if (emLoja && date === hoje) { fim = agora; andamento = true; }
+  else if (emLoja) { fim = Math.max(...ins.concat(outs)); fimEst = true; } // dia passado sem check-out: conta até a última entrada
+  else fim = Math.max(...outs.concat(ins));
   const bruto = Math.max(0, Math.round((fim - inicio) / 60000));
   const almoco = bruto > regras.almocoAcima ? regras.almocoMin : 0;
   const trabalhado = Math.max(0, bruto - almoco);
-  return { tem: true, inicio, fim, inicioEst, fimEst, andamento, emLoja, bruto, almoco, trabalhado, esperado, saldo: trabalhado - esperado, wd };
+  return { tem: true, inicio, fim, fimEst, andamento, emLoja, bruto, almoco, trabalhado, esperado, saldo: trabalhado - esperado, wd };
 }
 
 export const hmin = m => { if (m == null) return '—'; const s = m < 0 ? '-' : ''; m = Math.abs(Math.round(m)); return s + Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0'); };
