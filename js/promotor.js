@@ -25,8 +25,8 @@ $('#f-login').addEventListener('submit', async e => {
   e.preventDefault();
   const u = semAcento($('#lg-usuario').value.trim()).replace(/[^a-z0-9]/g, '');
   const c = pins.map(x => x.value).join('');
-  if (!u) return $('#lg-msg').textContent = 'Digite seu usuário.';
-  if (c.length < 4) return $('#lg-msg').textContent = 'Digite os 4 números do código.';
+  if (!u) return $('#lg-msg').textContent = 'Digite seu login.';
+  if (c.length < 4) return $('#lg-msg').textContent = 'Digite os 4 números da senha.';
   $('#lg-btn').disabled = true; $('#lg-msg').textContent = 'Entrando…';
   try { await signInWithEmailAndPassword(auth, emailPromotor(u), senhaPromotor(c)); lsSet('np.usuario', u); }
   catch (err) { $('#lg-msg').textContent = erroMsg(err); pins.forEach(x => x.value = ''); pins[0].focus(); }

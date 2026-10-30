@@ -2,7 +2,7 @@
 import {
   auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
   deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField,
-  criarAcessoPromotor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
+  criarAcessoPromotor, apagarContaPromotor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
 
@@ -20,7 +20,7 @@ const secoes = ['painel', 'montar', 'cli', 'var', 'equipe', 'config'];
 $('#f-login').addEventListener('submit', async e => {
   e.preventDefault(); $('#lg-msg').textContent = 'Entrando…';
   try { await signInWithEmailAndPassword(auth, $('#lg-email').value.trim(), $('#lg-senha').value); }
-  catch (err) { $('#lg-msg').textContent = erroMsg(err).replace('Usuário ou código', 'E-mail ou senha'); }
+  catch (err) { $('#lg-msg').textContent = erroMsg(err).replace('Login ou senha incorretos', 'E-mail ou senha incorretos'); }
 });
 $('#sair').onclick = async () => { await signOut(auth); location.reload(); };
 onAuthStateChanged(auth, async user => {
@@ -453,51 +453,75 @@ function renderEquipe() {
   const c = $('#v-equipe');
   if (vazioCarregando()) { c.innerHTML = '<div class="empty">Carregando…</div>'; return; }
   c.innerHTML = `<div class="spread"><h2>Equipe e acessos</h2><button class="btn primary" id="eq-novo">+ Novo promotor</button></div>
-    <div class="note">O promotor entra no app com o <b>usuário</b> e o <b>código</b> abaixo. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
-    <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Usuário</th><th>Código</th><th></th></tr></thead><tbody>
+    <div class="note">O promotor entra no app com o <b>login</b> e a <b>senha</b> abaixo. Para mudar, clique em <b>Editar</b>. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th></th></tr></thead><tbody>
     ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}<div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
       <td style="font-size:13px">${h(p.telefone || '')}<div class="muted">${h(p.email || '')}</div></td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td>
-      <td class="r"><div class="row" style="gap:4px;justify-content:flex-end"><button class="btn sm" data-ac="${h(p.id)}">${a ? 'Trocar código' : 'Criar acesso'}</button><button class="btn sm ghost" data-ed="${h(p.id)}">Editar</button></div></td></tr>`; }).join('')}
+      <td class="r"><button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
   c.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => editaPromotor(S.promotores.find(p => p.id === b.dataset.ed)));
-  c.querySelectorAll('[data-ac]').forEach(b => b.onclick = () => acesso(S.promotores.find(p => p.id === b.dataset.ac)));
 }
+function sugereUsuario(nome, pid) { const base = usuarioDeNome(nome) || 'promotor'; let u = base, n = 2; while (Object.entries(S.acessos).some(([k, x]) => x.usuario === u && k !== pid)) u = base + n++; return u; }
+function codigoNovo() { const usados = new Set(Object.values(S.acessos).map(a => a.codigo)); let c; do { c = String(Math.floor(Math.random() * 10000)).padStart(4, '0'); } while (usados.has(c) || new Set(c).size < 2 || ['1234', '4321', '0123'].includes(c)); return c; }
+// Cadastro do promotor + login e senha do app, tudo na mesma ficha
 function editaPromotor(p) {
   const novo = !p; p = p || { ativo: true };
+  const a = novo ? null : S.acessos[p.id];
   abreModal(`<div class="spread"><h3>${novo ? 'Novo promotor' : h(p.nome)}</h3><button class="btn ghost" id="ep-x">Fechar</button></div>
     <form id="ep" class="stack"><label class="field"><span>Nome completo</span><input type="text" name="nome" value="${h(p.nome || '')}" required></label>
+    <div class="grid2" style="gap:10px"><label class="field"><span>Login do app</span><input type="text" name="usuario" autocapitalize="none" autocomplete="off" value="${h(a ? a.usuario : '')}" placeholder="${h(sugereUsuario(p.nome || '', p.id))}"></label>
+    <label class="field"><span>Senha do app (4 números)</span><input type="text" name="codigo" inputmode="numeric" maxlength="4" autocomplete="off" value="${h(a ? a.codigo : '')}" placeholder="ex.: ${codigoNovo()}"></label></div>
+    <div class="muted" style="font-size:12.5px;margin-top:-6px">${a ? 'Ao mudar o login ou a senha, o promotor passa a entrar com os novos na hora. Quem estiver com o app aberto precisará entrar de novo.' : 'Deixe em branco para criar o acesso depois. O login usa só letras minúsculas e números, sem espaço nem acento.'}</div>
     <label class="field"><span>Base (cidade)</span><input type="text" name="base" value="${h(p.base || '')}"></label>
     <label class="field"><span>Telefone</span><input type="tel" name="telefone" value="${h(p.telefone || '')}"></label>
     <label class="field"><span>E-mail</span><input type="email" name="email" value="${h(p.email || '')}"></label>
     <label class="row" style="gap:8px"><input type="checkbox" name="ativo" ${p.ativo !== false ? 'checked' : ''}> Ativo</label>
-    <div class="row end"><button class="btn primary" type="submit">Salvar</button></div></form>`);
+    <div id="ep-msg"></div>
+    <div class="row end"><button class="btn primary" type="submit" id="ep-s">Salvar</button></div></form>`);
   $('#ep-x').onclick = fechaModal;
   $('#ep').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
     const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), atualizado: Date.now() };
+    const usuario = semAcento(String(f.get('usuario') || '').trim()).replace(/\s+/g, '');
+    const codigo = String(f.get('codigo') || '').trim();
     const id = novo ? semAcento(v.nome).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : p.id;
-    if (novo && S.promotores.some(x => x.id === id)) return toast('Já existe um promotor com esse nome.');
-    try { await setDoc(doc(db, 'promotores', id), v, { merge: true }); fechaModal(); toast('Promotor salvo'); } catch (err) { toast(erroMsg(err)); }
+    const msg = t => { $('#ep-msg').innerHTML = t ? `<div class="note crit">${h(t)}</div>` : ''; };
+    if (!v.nome) return msg('Informe o nome.');
+    if (novo && S.promotores.some(x => x.id === id)) return msg('Já existe um promotor com esse nome.');
+    const mexeuAcesso = a ? (usuario !== a.usuario || codigo !== a.codigo) : !!(usuario || codigo);
+    if (mexeuAcesso) {
+      if (!usuario || !codigo) return msg('Para o acesso ao app, preencha o login e a senha.');
+      if (!/^[a-z0-9]{3,20}$/.test(usuario)) return msg('O login deve ter de 3 a 20 letras minúsculas ou números, sem espaço nem acento.');
+      if (!/^\d{4}$/.test(codigo)) return msg('A senha precisa ter exatamente 4 números.');
+      const dono = Object.entries(S.acessos).find(([k, x]) => x.usuario === usuario && k !== id);
+      if (dono) return msg(`O login "${usuario}" já é de ${promNome(dono[0])}.`);
+    }
+    const b = $('#ep-s'); b.disabled = true; b.textContent = 'Salvando…';
+    try {
+      await setDoc(doc(db, 'promotores', id), v, { merge: true });
+      if (mexeuAcesso) await salvaAcesso(id, a, usuario, codigo);
+      fechaModal(); toast(mexeuAcesso ? `Salvo. ${v.nome.split(' ')[0]} entra com login ${usuario} e senha ${codigo}.` : 'Promotor salvo', 6000);
+    } catch (err) { b.disabled = false; b.textContent = 'Salvar'; msg(erroAcesso(err)); }
   };
 }
-function codigoNovo() { const usados = new Set(Object.values(S.acessos).map(a => a.codigo)); let c; do { c = String(Math.floor(Math.random() * 10000)).padStart(4, '0'); } while (usados.has(c) || new Set(c).size < 2 || ['1234', '4321', '0123'].includes(c)); return c; }
-function acesso(p) {
-  const a = S.acessos[p.id];
-  let usuario = a ? a.usuario : usuarioDeNome(p.nome);
-  if (!a) { let u = usuario, n = 2; while (Object.values(S.acessos).some(x => x.usuario === u)) u = usuario + n++; usuario = u; }
-  abreModal(`<div class="spread"><h3>${a ? 'Trocar código' : 'Criar acesso'} · ${h(p.nome.split(' ')[0])}</h3><button class="btn ghost" id="ac-x">Fechar</button></div>
-    <label class="field"><span>Usuário</span><input type="text" value="${h(usuario)}" disabled></label>
-    <label class="field"><span>Código (4 números)</span><input type="text" id="ac-c" inputmode="numeric" maxlength="4" value="${codigoNovo()}"></label>
-    <div class="row end"><button class="btn primary" id="ac-s">${a ? 'Trocar código' : 'Criar acesso'}</button></div>`);
-  $('#ac-x').onclick = fechaModal;
-  $('#ac-s').onclick = async () => {
-    const c = $('#ac-c').value.trim(); if (!/^\d{4}$/.test(c)) return toast('O código precisa ter 4 números.');
-    $('#ac-s').disabled = true; $('#ac-s').textContent = 'Salvando…';
-    try { await gravaAcesso(p.id, usuario, c, a && a.codigo); fechaModal(); toast(`Acesso de ${p.nome.split(' ')[0]}: usuário ${usuario}, código ${c}`, 6000); }
-    catch (e) { $('#ac-s').disabled = false; $('#ac-s').textContent = 'Tentar de novo'; toast(erroMsg(e), 6000); }
-  };
+function erroAcesso(e) {
+  const c = (e && e.code) || '';
+  if (c.includes('email-already-in-use')) return 'Esse login já existe no sistema de acesso (pode ser de um cadastro antigo). Escolha outro login.';
+  if (c.includes('invalid-credential') || c.includes('wrong-password')) return 'Não consegui trocar a senha porque a senha antiga gravada não confere. Troque também o login para criar um acesso novo.';
+  return erroMsg(e);
+}
+// Cria, troca a senha ou troca o login do promotor
+async function salvaAcesso(pid, a, usuario, codigo) {
+  if (a && a.usuario === usuario) return gravaAcesso(pid, usuario, codigo, a.codigo); // só a senha mudou
+  const uid = await criarAcessoPromotor(usuario, codigo, null); // login novo: cria a conta nova
+  await setDoc(doc(db, 'usuarios', uid), { promotorId: pid, usuario });
+  await setDoc(doc(db, 'acessos', pid), { usuario, codigo, uid, atualizado: Date.now() });
+  if (a) { // desliga o login antigo
+    if (a.uid && a.uid !== uid) await deleteDoc(doc(db, 'usuarios', a.uid)).catch(() => {});
+    await apagarContaPromotor(a.usuario, a.codigo);
+  }
 }
 async function gravaAcesso(pid, usuario, codigo, codigoAntigo) {
   const uid = await criarAcessoPromotor(usuario, codigo, codigoAntigo);

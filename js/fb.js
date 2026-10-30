@@ -2,7 +2,7 @@
 import { initializeApp, deleteApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  createUserWithEmailAndPassword, updatePassword, setPersistence, browserLocalPersistence
+  createUserWithEmailAndPassword, updatePassword, deleteUser, setPersistence, browserLocalPersistence
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager, serverTimestamp,
@@ -66,6 +66,15 @@ export async function criarAcessoPromotor(usuario, codigo, codigoAntigo) {
   }
 }
 
+// Apaga a conta antiga de login de um promotor (quando o login é trocado). Se não conseguir, só segue: o vínculo é removido na Gestão.
+export async function apagarContaPromotor(usuario, codigo) {
+  const sec = initializeApp(firebaseConfig, 'del-' + Date.now());
+  const sa = getAuth(sec);
+  try { const cred = await signInWithEmailAndPassword(sa, emailPromotor(usuario), senhaPromotor(codigo)); await deleteUser(cred.user); return true; }
+  catch (e) { return false; }
+  finally { try { await signOut(sa); } catch (e) {} try { await deleteApp(sec); } catch (e) {} }
+}
+
 // ---------- utilidades ----------
 export const $ = s => document.querySelector(s);
 export const h = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -109,7 +118,7 @@ export function erroMsg(e) {
   const c = e && e.code || '';
   if (c.includes('permission-denied')) return 'Sem permissão para essa ação.';
   if (c.includes('unavailable') || c.includes('network')) return 'Sem internet. O registro será enviado quando a conexão voltar.';
-  if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'Usuário ou código incorreto.';
+  if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'Login ou senha incorretos.';
   if (c.includes('too-many-requests')) return 'Muitas tentativas. Aguarde alguns minutos e tente de novo.';
   return 'Não deu certo: ' + (e && e.message || 'erro desconhecido');
 }
