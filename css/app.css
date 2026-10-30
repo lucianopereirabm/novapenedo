@@ -137,11 +137,12 @@ tr.click:hover td{background:var(--sunk)}
 .side-item .ic{width:28px;height:28px;border-radius:8px;background:var(--sunk);display:grid;place-items:center;font-size:13px;font-weight:800;flex:none}
 .side-item[aria-current="true"] .ic{background:var(--accent);color:var(--brand-n)}
 .gestao main{max-width:1180px}
+.gestao .top-in{max-width:none;padding-left:24px;padding-right:24px}
 .grid2{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
 @media (min-width:900px){
   .gestao .shell{display:grid;grid-template-columns:232px minmax(0,1fr);align-items:start}
   .gestao .side{flex-direction:column;position:sticky;top:calc(env(safe-area-inset-top,0px) + 58px);height:calc(100vh - 58px);border-bottom:0;border-right:1px solid var(--line);padding:18px 12px}
-  .gestao main{padding:24px 28px 48px;margin:0}
+  .gestao main{padding:24px 28px 48px;margin:0;max-width:none}
   .grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 }
 .semana td,.semana th{text-align:center}
@@ -198,7 +199,8 @@ tr.click:hover td{background:var(--sunk)}
 .det-grid td .tag{white-space:nowrap}
 
 .torre-wrap{display:grid;gap:14px;align-items:start}
-@media (min-width:1280px){.torre-wrap{grid-template-columns:minmax(0,1fr) minmax(380px,40%)}.torre-wrap .torre{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}.mapa-geral{position:sticky;top:76px}}
+@media (min-width:1200px){.torre-wrap{grid-template-columns:minmax(0,1fr) minmax(420px,44%)}.torre-wrap .torre{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}.mapa-geral{position:sticky;top:76px}.mapa-geral #mapa{height:calc(100vh - 200px);min-height:420px;max-height:none}}
+@media (min-width:1700px){.torre-wrap{grid-template-columns:minmax(0,1fr) minmax(520px,46%)}}
 .mapa-geral #mapa{height:min(68vh,620px);border-radius:12px}
 .pin-p{display:flex;flex-direction:column;align-items:center;gap:2px}
 .pin-p img,.pin-p span{width:40px;height:40px;border-radius:50%;object-fit:cover;border:3px solid var(--anel);box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;color:#fff;font:700 13px var(--f-body,sans-serif);background:#fff}
@@ -210,3 +212,4 @@ tr.click:hover td{background:var(--sunk)}
 .ck{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4}
 .ck input{width:22px;height:22px;flex:none;margin-top:1px;accent-color:var(--brand-y)}
 .ck.destaque{background:var(--warn-soft);border-radius:10px;padding:10px}
+.tcard .st .pill{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:bottom;white-space:nowrap}
