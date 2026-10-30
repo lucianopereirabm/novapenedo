@@ -9,13 +9,14 @@ import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-10-30.6';
+export const VERSAO_APP = '2026-10-30.10';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
+const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Panco', 'Pão de forma Plus Vita'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const MOTIVOS = ['Loja fechada', 'Sem acesso / recebimento', 'Falta de tempo', 'Outro'];
 const TIPOS = [['chegada', 'Chegada'], ['antes', 'Gôndola antes'], ['depois', 'Gôndola depois'], ['extra', 'Foto extra']];
 
-const S = { jor: null, cfgApp: null, rosto: null, uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
+const S = { pesquisa: PESQ_PADRAO, jor: null, cfgApp: null, rosto: null, uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
 const show = id => ['carregando', 'v-login', 'v-semacesso', 'v-rota', 'v-rosto', 'v-termos'].forEach(x => $('#' + x).hidden = x !== id);
 
 /* ---------- login ---------- */
@@ -187,7 +188,9 @@ function cpfValido(c) {
 function abreApp() {
   show('v-rota');
   S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' }; $('#quem').innerHTML = `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`; render(); }));
+  S.unsub.push(onSnapshot(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
+  S.unsub.push(onSnapshot(doc(db, 'dias', S.hoje, 'jornadas', S.pid), s => { S.jor = s.exists() ? s.data() : null; render(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists()) S.cfgApp = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; render(); }, () => {}));
   setInterval(() => { if (!$('#v-rota').hidden) render(); }, 60000);
   S.unsub.push(onSnapshot(query(collection(db, 'lojas'), where('promotorId', '==', S.pid)), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); }, e => toast(erroMsg(e))));
@@ -249,15 +252,42 @@ function render() {
   c.innerHTML = html;
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora));
   $('#b-fora').onclick = buscaFora;
+  const ba = $('#b-alm'); if (ba) ba.onclick = almoco;
 }
 /* ---------- jornada: início e fim do dia de trabalho ---------- */
 function cartaoJornada() {
-  const J = calcJornada({ vs: Object.values(S.vis), date: S.hoje, regras: regrasJornada(S.cfgApp), hoje: S.hoje });
+  const J = calcJornada({ vs: Object.values(S.vis), j: S.jor, date: S.hoje, regras: regrasJornada(S.cfgApp), hoje: S.hoje });
+  const jor = S.jor || {};
   if (!J.tem) return `<div class="jor card"><div><div class="label">Jornada</div><b>Começa no check-in da primeira loja</b></div></div>`;
   const pend = lojasHoje().filter(l => !S.vis[vid(l.id)]).length;
-  if (J.andamento || pend) return `<div class="jor card on"><div><div class="label">Jornada desde ${hm(J.inicio)}</div><b class="num">${hmin(J.trabalhado)} trabalhadas${J.andamento ? '' : ' até o último check-out'}</b>${J.almoco ? '<span class="muted" style="font-size:12px"> (almoço de 1h descontado)</span>' : ''}</div></div>`;
-  return `<div class="jor card fim"><div><div class="label">Jornada do dia</div><b class="num">${hm(J.inicio)}–${hm(J.fim)} · ${hmin(J.trabalhado)}</b> <span class="muted num" style="font-size:12px">saldo ${saldoTxt(J.saldo)}</span></div></div>`;
+  const alm = jor.almocoInicio && !jor.almocoFim
+    ? `<div class="jor-alm on"><span>🍽️ Almoço desde <b>${hm(jor.almocoInicio)}</b> · ${hmin((Date.now() - jor.almocoInicio) / 60000)}</span><button class="btn primary sm" id="b-alm">Encerrar almoço</button></div>`
+    : jor.almocoFim ? `<div class="jor-alm"><span>🍽️ Almoço ${hm(jor.almocoInicio)}–${hm(jor.almocoFim)} · ${hmin((jor.almocoFim - jor.almocoInicio) / 60000)}</span></div>`
+    : (pend && !J.emLoja ? `<div class="jor-alm"><span class="muted">Hora do almoço? Marque o início e o fim.</span><button class="btn sm" id="b-alm">Iniciar almoço</button></div>` : '');
+  const desc = J.almoco ? `<span class="muted" style="font-size:12px"> (almoço ${J.almocoMarcado ? hmin(J.almoco) : 'de 1h'} descontado)</span>` : '';
+  if (J.andamento || pend) return `<div class="jor card on"><div style="flex:1"><div class="label">Jornada desde ${hm(J.inicio)}</div><b class="num">${hmin(J.trabalhado)} trabalhadas${J.andamento ? '' : ' até a última saída'}</b>${desc}${alm}</div></div>`;
+  return `<div class="jor card fim"><div style="flex:1"><div class="label">Jornada do dia</div><b class="num">${hm(J.inicio)}–${hm(J.fim)} · ${hmin(J.trabalhado)}</b> <span class="muted num" style="font-size:12px">saldo ${saldoTxt(J.saldo)}</span>${desc}${alm}</div></div>`;
 }
+async function almoco() {
+  const jor = S.jor || {};
+  if (!jor.almocoInicio) {
+    if (Object.values(S.vis).some(v => v.status === 'em_loja')) return toast('Faça o check-out da loja antes de sair para o almoço.', 5000);
+    if (!(await confirma('Iniciar o horário de almoço agora?', 'Iniciar almoço'))) return;
+    let gps = null; try { gps = await pegaGPS(15000); } catch (e) {}
+    const t = Date.now(); const reg = { promotorId: S.pid, data: S.hoje, almocoInicio: t, gpsAlmocoInicio: gps, recebidoAlmocoInicio: serverTimestamp(), uid: S.uid };
+    S.jor = Object.assign({}, S.jor, reg); render();
+    grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), reg, { merge: true })); msgSalvo('Almoço iniciado às ' + hm(t));
+  } else if (!jor.almocoFim) {
+    let gps = null; try { gps = await pegaGPS(15000); } catch (e) {}
+    fimAlmoco(Date.now(), gps);
+  }
+}
+function fimAlmoco(t, gps) {
+  const upd = { promotorId: S.pid, almocoFim: t, gpsAlmocoFim: gps || null, recebidoAlmocoFim: serverTimestamp() };
+  S.jor = Object.assign({}, S.jor, upd); render();
+  grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), upd, { merge: true })); msgSalvo('Almoço encerrado às ' + hm(t));
+}
+
 async function buscaFora() {
   abreModal(`<div class="spread"><h3>Loja fora da rota</h3><button class="btn ghost" id="bf-x">Fechar</button></div>
     <input type="text" id="bf-q" placeholder="Código ou nome da loja" autocomplete="off"><div id="bf-r" class="muted">Carregando lojas…</div>`);
@@ -306,7 +336,7 @@ function renderVisita() {
   }
   st.innerHTML = `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout || Date.now())}</b></div></div>
     ${v.distIn != null ? `<div class="note ${v.distIn > S.raio ? 'warn' : 'ok'}">Check-in a ${v.distIn} m da loja (precisão do GPS ${v.gpsIn ? v.gpsIn.prec : '?'} m).</div>` : ''}`;
-  $('#v-detalhes').hidden = false; renderFotos(); renderCheck(v);
+  $('#v-detalhes').hidden = false; renderFotos(); renderCheck(v); renderPesquisa(v);
   if (document.activeElement !== $('#v-obs')) $('#v-obs').value = v.obs || '';
   $('#v-saida').innerHTML = v.status === 'em_loja' ? `<button class="btn primary big" id="b-out">Fazer check-out</button>` : `<div class="note ok">Visita concluída às ${hm(v.checkout)}.</div>`;
   const bo = $('#b-out'); if (bo) bo.onclick = checkout;
@@ -356,6 +386,7 @@ async function checkin() {
   const visita = novaVisita(Object.assign({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, semCoord: V.loja.lat == null, fotos: 1 }, rosto || {}));
   S.vis[V.id] = visita; S.fotos = [foto]; renderVisita();
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
+  if (S.jor && S.jor.almocoInicio && !S.jor.almocoFim) fimAlmoco(foto.ts, gps); // chegou na loja: fim do almoço
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);
   msgSalvo('Check-in registrado às ' + hm(visita.checkin));
 }
@@ -363,6 +394,8 @@ async function checkout() {
   const V = S.visita; const v = S.vis[V.id];
   const semFoto = ['antes', 'depois'].filter(t => !S.fotos.some(x => x.tipo === t));
   if (semFoto.length) { toast('Para fazer check-out, tire a foto: gôndola ' + semFoto.join(' e ') + '.', 5000); $('#v-fotos').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+  const semPreco = S.pesquisa.filter(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
+  if (semPreco.length) { toast('Preencha a pesquisa de preço: ' + semPreco.join(', ') + '.', 6000); $('#v-pp').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   const faltam = S.checklist.filter(q => !(v.checklist || {})[q.replace(/[.~*/\[\]]/g, '_')]).length;
   if (faltam && !(await confirma(`${faltam} pergunta(s) do checklist sem resposta. Fazer check-out mesmo assim?`, 'Fazer check-out'))) return;
   const b = $('#b-out'); if (b) { b.disabled = true; b.textContent = 'Pegando o GPS…'; }
@@ -388,8 +421,9 @@ function naoVisitou() {
 }
 function atualiza(campos) {
   const V = S.visita; const v = S.vis[V.id];
-  if (v) { S.vis[V.id] = Object.assign({}, v, campos, campos.checklist ? { checklist: Object.assign({}, v.checklist, campos.checklist) } : {}); renderVisita(); }
+  if (v) { S.vis[V.id] = Object.assign({}, v, campos, campos.checklist ? { checklist: Object.assign({}, v.checklist, campos.checklist) } : {}, campos.precos ? { precos: Object.assign({}, v.precos, campos.precos) } : {}); renderVisita(); }
   const upd = Object.assign({}, campos, { atualizado: Date.now(), recebido: serverTimestamp() });
+  if (campos.precos) { delete upd.precos; Object.entries(campos.precos).forEach(([k, val]) => upd['precos.' + chaveQ(k)] = val); }
   if (campos.checklist) { delete upd.checklist; Object.entries(campos.checklist).forEach(([k, val]) => upd['checklist.' + k.replace(/[.~*/\[\]]/g, '_')] = val); }
   return grava(updateDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), upd));
 }
@@ -415,6 +449,34 @@ function salvaFotos(lista) {
   const V = S.visita; S.fotos = lista; renderFotos();
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: lista }), true);
   atualiza({ fotos: lista.length }); msgSalvo('Foto salva');
+}
+/* ---------- pesquisa de preço ---------- */
+const chaveQ = q => q.replace(/[.~*/\[\]]/g, '_');
+const precoRespondido = x => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0));
+const brl2 = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function renderPesquisa(v) {
+  const box = $('#v-pp'); if (box.contains(document.activeElement)) return; // não atrapalha quem está digitando
+  const resp = v.precos || {}; const pode = v.status === 'em_loja';
+  box.innerHTML = S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
+    return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
+      <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="decimal" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
+      <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Não tem</button></div></div>`; }).join('');
+  const ok = S.pesquisa.filter(q => precoRespondido(resp[chaveQ(q)])).length;
+  $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`;
+  box.querySelectorAll('[data-pq]').forEach(inp => {
+    inp.oninput = () => { inp.value = inp.value.replace(/[^\d,.]/g, ''); };
+    inp.onchange = () => {
+      const q = S.pesquisa[+inp.dataset.pq]; const t = inp.value.trim().replace(/\./g, ',');
+      if (!t) { atualiza({ precos: { [q]: null } }); return; }
+      const n = +t.replace(/,(?=.*,)/g, '').replace(',', '.');
+      if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
+      atualiza({ precos: { [q]: { preco: Math.round(n * 100) / 100, ts: Date.now() } } }); inp.blur();
+    };
+  });
+  box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
+    const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
+    atualiza({ precos: { [q]: atual ? null : { falta: true, ts: Date.now() } } });
+  });
 }
 function renderCheck(v) {
   const box = $('#v-check'); const resp = v.checklist || {};

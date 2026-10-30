@@ -9,14 +9,15 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-10-30.8';
+const VERSAO_GESTAO = '2026-10-30.10';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
+const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Panco', 'Pão de forma Plus Vita'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const CORES = ['#E0457B', '#2F80ED', '#27AE60', '#F2994A', '#9B51E0', '#00A3A3', '#B8860B', '#EB5757', '#56CCF2', '#6FCF97', '#BB6BD9', '#333F99'];
 const LOGO = 'img/logo.png';
 
-const S = { termos: {}, empresa: {}, rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
+const S = { pesquisa: PESQ_PADRAO, termos: {}, empresa: {}, rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
   tab: lsGet('np.g.tab') || 'painel', pronto: { p: false, l: false } };
 const secoes = ['painel', 'montar', 'cli', 'var', 'equipe', 'config'];
 
@@ -47,6 +48,7 @@ function iniciar() {
   escuta(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; if (['equipe', 'painel'].includes(S.tab)) render(); }, () => {});
   escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
   escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
+  escuta(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
@@ -91,8 +93,9 @@ const vazioCarregando = () => !(S.pronto.p && S.pronto.l);
    ========================================================= */
 const P = { modo: lsGet('np.p.modo') === 'mes' ? 'mes' : 'dia', mes: ymd(new Date()).slice(0, 7), dadosMes: {}, selMes: '', data: ymd(new Date()), vis: {}, unsub: null, mapa: null, camada: null, sel: '' };
 function assinaPainel() {
-  if (P.unsub) P.unsub();
-  P.vis = {};
+  if (P.unsub) P.unsub(); if (P.unsubJ) P.unsubJ();
+  P.vis = {}; P.jor = {};
+  P.unsubJ = onSnapshot(collection(db, 'dias', P.data, 'jornadas'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); P.jor = m; if (S.tab === 'painel') renderPainel(); }, () => {});
   P.unsub = onSnapshot(collection(db, 'dias', P.data, 'visitas'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); P.vis = m; if (S.tab === 'painel') renderPainel(); }, e => toast(erroMsg(e)));
 }
 // Resumo do dia de um promotor: paradas na ordem da rota + visitas fora da rota
@@ -110,8 +113,19 @@ function diaDoPromotor(pid) {
   const tempo = vs.reduce((a, x) => a + (x.v.checkin && x.v.checkout ? x.v.checkout - x.v.checkin : 0), 0);
   const alertas = vs.filter(x => x.v.rostoOk === false || (x.v.distIn != null && x.v.distIn > S.raio)).length;
   const ultima = vs.filter(x => x.v.checkout).sort((a, b) => b.v.checkout - a.v.checkout)[0];
-  const J = calcJornada({ vs: vs.map(x => x.v), date: P.data, regras: regrasJornada(S.empresa), hoje: ymd(new Date()) });
+  const J = calcJornada({ j: (P.jor || {})[pid], vs: vs.map(x => x.v), date: P.data, regras: regrasJornada(S.empresa), hoje: ymd(new Date()) });
   if (P.data === ymd(new Date()) && paradas.some(x => !x.extra && !x.v)) J.hojeAberto = true; // ainda tem loja na rota: saldo só no fim
+  // atenção (amarelo): hoje, ainda não começou depois do horário, ou parado há mais que a tolerância sem check-in na próxima loja
+  let atencao = '';
+  if (P.data === ymd(new Date()) && lojas.length) {
+    const R = regrasJornada(S.empresa); const agoraMs = Date.now();
+    const [hh, mm] = String(R.inicioPrevisto).split(':').map(Number); const limite = new Date(); limite.setHours(hh || 8, (mm || 0) + R.tolerancia, 0, 0);
+    const pend = paradas.some(x => !x.extra && !x.v); const sai = vs.map(x => x.v.checkout || (x.v.status === 'nao_visitada' ? x.v.registrado : 0)).filter(Boolean);
+    const ultimaAcao = sai.length ? Math.max(...sai) : 0;
+    if (!J.tem && !vs.length && agoraMs > limite.getTime()) atencao = `Sem check-in até agora (início previsto ${R.inicioPrevisto})`;
+    else if (pend && !agora && !J.almocoAberto && ultimaAcao && agoraMs - ultimaAcao > R.tolerancia * 60000) atencao = `Sem check-in há ${hmin((agoraMs - ultimaAcao) / 60000)} desde a última loja`;
+  }
+  J.atencao = atencao;
   return { J, pid, paradas, programadas: lojas.length, feitas, extras, nao, agora, primeira: ents.length ? Math.min(...ents) : null, ultimaSaida: sais.length ? Math.max(...sais) : null, ultima, tempo, alertas };
 }
 const nomeCurto = id => { const w = promNome(id).split(' ').filter(x => x && !['da', 'de', 'do', 'das', 'dos', 'e'].includes(x.toLowerCase())); return w.length > 1 ? w[0] + ' ' + w[w.length - 1] : w[0] || ''; };
@@ -156,8 +170,8 @@ function renderPainel() {
   const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id)); Object.values(P.vis).forEach(v => ids.add(v.promotorId));
   const dias = [...ids].map(diaDoPromotor).filter(d => d.programadas || d.paradas.length || d.J.tem)
     .sort((a, b) => promNome(a.pid).localeCompare(promNome(b.pid)));
-  const T = dias.reduce((t, d) => ({ prog: t.prog + d.programadas, feitas: t.feitas + d.feitas, live: t.live + (d.agora ? 1 : 0), nao: t.nao + d.nao, al: t.al + d.alertas, extras: t.extras + d.extras }), { prog: 0, feitas: 0, live: 0, nao: 0, al: 0, extras: 0 });
-  $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas</span></div><div class="kpi"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas</span></div><div class="kpi"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas (rosto ou GPS)</span></div></div>`;
+  const T = dias.reduce((t, d) => ({ prog: t.prog + d.programadas, feitas: t.feitas + d.feitas, live: t.live + (d.agora ? 1 : 0), nao: t.nao + d.nao, al: t.al + d.alertas, extras: t.extras + d.extras, at: t.at + (d.J.atencao ? 1 : 0) }), { prog: 0, feitas: 0, live: 0, nao: 0, al: 0, extras: 0, at: 0 });
+  $('#p-kpis').innerHTML = `<div class="kpis num k5"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas</span></div><div class="kpi"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas</span></div><div class="kpi"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas (rosto ou GPS)</span></div><div class="kpi"><b style="color:${T.at ? '#B88600' : 'inherit'}">${T.at}</b><span>Atenção agora (parado ou sem início)</span></div></div>`;
   const box = $('#p-corpo');
   if (P.sel && dias.some(d => d.pid === P.sel)) return renderDetalhe(dias.find(d => d.pid === P.sel));
   P.sel = '';
@@ -171,7 +185,7 @@ function renderPainel() {
   }
   $('#p-cards').innerHTML = dias.map(d => {
     const pct = d.programadas ? Math.round(d.feitas / d.programadas * 100) : 0;
-    return `<button class="tcard" data-p="${h(d.pid)}">
+    return `<button class="tcard ${d.J.atencao ? 'atencao' : ''}" data-p="${h(d.pid)}">${d.J.atencao ? `<div class="aviso-at">⚠ ${h(d.J.atencao)}</div>` : ''}
       <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b><div class="st">${statusTexto(d)}</div></div>
         <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
       ${estrada(d)}
@@ -196,6 +210,9 @@ function ultimoEvento(d) {
     if (v.status === 'nao_visitada') ev.push({ t: v.registrado || 0, html: `<span class="ic-ev no">✕</span> Não visitou <b>${n}</b> · ${h(v.motivo || '')} · ${hm(v.registrado)}` });
     else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${v.distIn != null && v.distIn > S.raio ? ` · <span style="color:var(--crit)">${v.distIn} m</span>` : ''}` });
       if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
+  const jr = (P.jor || {})[d.pid];
+  if (jr && jr.almocoInicio) ev.push({ t: jr.almocoInicio, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Saiu para o almoço às ${hm(jr.almocoInicio)}` });
+  if (jr && jr.almocoFim) ev.push({ t: jr.almocoFim, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Voltou do almoço às ${hm(jr.almocoFim)} · ${hmin((jr.almocoFim - jr.almocoInicio) / 60000)}` });
   if (!ev.length) return '<span class="muted">Aguardando o primeiro check-in</span>';
   return ev.sort((a, b) => b.t - a.t)[0].html;
 }
@@ -214,7 +231,7 @@ async function carregaMes(mes) {
   const D = P.dadosMes[mes] = { carregando: true, vis: {}, jor: {} };
   const ds = diasDoMes(mes);
   await Promise.all(ds.map(async d => {
-    const [v, j] = [await getDocs(collection(db, 'dias', d, 'visitas')).catch(() => null), null];
+    const [v, j] = await Promise.all([getDocs(collection(db, 'dias', d, 'visitas')).catch(() => null), getDocs(collection(db, 'dias', d, 'jornadas')).catch(() => null)]);
     D.vis[d] = {}; if (v) v.docs.forEach(x => D.vis[d][x.id] = x.data());
     D.jor[d] = {}; if (j) j.docs.forEach(x => D.jor[d][x.id] = x.data());
   }));
@@ -235,7 +252,7 @@ function resumoMes(D, mes) {
       const fora = vs.filter(([k, v]) => !naRota.has(k) && v.status !== 'nao_visitada').length;
       const sem = d < hoje ? lojas.filter(l => !m[l.id + '_' + pid]) : [];
       const al = vs.filter(([, v]) => v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)).length;
-      const J = calcJornada({ vs: vs.map(([, v]) => v), date: d, regras, hoje });
+      const J = calcJornada({ j: (D.jor[d] || {})[pid], vs: vs.map(([, v]) => v), date: d, regras, hoje });
       const falta = !J.tem && d < hoje && lojas.length > 0 && J.esperado > 0 && !vs.some(([, v]) => v.status === 'nao_visitada');
       if (!lojas.length && !vs.length && !J.tem) return;
       R.dias.push({ d, lojas: lojas.length, feitas, nao, fora, sem, al, J, falta });
@@ -277,7 +294,7 @@ function renderMesPromotor(r, nomeMes) {
     <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Data</th><th>Jornada</th><th class="r">Trabalhado</th><th class="r">Previsto</th><th class="r">Saldo</th><th class="r">Visitas</th><th>Sem visita</th><th class="r">Alertas</th></tr></thead><tbody>
     ${r.dias.map(x => { const J = x.J; return `<tr class="click" data-dd="${x.d}"><td><b>${x.d.slice(8)}/${x.d.slice(5, 7)}</b> <span class="muted">${DIAS[J.wd]}</span></td>
       <td>${x.falta ? '<span class="tag no">sem jornada</span>' : J.tem ? `${hm(J.inicio)}–${J.andamento ? 'agora' : hm(J.fim) + (J.fimEst ? '*' : '')}` : '—'}</td>
-      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento && x.d !== ymd(new Date()) ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento && x.d !== ymd(new Date()) ? saldoTxt(J.saldo) : J.tem ? 'hoje, em andamento' : '—'}</td>
+      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}${J.tem && J.almoco ? `<div class="muted" style="font-size:11px">almoço ${J.almocoMarcado ? hm(J.almocoIni) + '–' + (J.almocoFim ? hm(J.almocoFim) : '?') : '1h (padrão)'}</div>` : ''}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento && x.d !== ymd(new Date()) ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento && x.d !== ymd(new Date()) ? saldoTxt(J.saldo) : J.tem ? 'hoje, em andamento' : '—'}</td>
       <td class="r">${x.feitas}/${x.lojas}${x.fora ? ` <span class="muted">+${x.fora}</span>` : ''}</td>
       <td style="font-size:12.5px">${x.nao ? `<span class="tag">${x.nao} com motivo</span> ` : ''}${x.sem.length ? `<span style="color:var(--crit)">${x.sem.map(l => h(l.nome)).join(', ')}</span>` : (x.nao ? '' : '—')}</td>
       <td class="r" style="color:${x.al ? 'var(--crit)' : 'inherit'}">${x.al || '—'}</td></tr>`; }).join('')}
@@ -295,6 +312,7 @@ function csvMes(RS, nomeMes) {
 }
 const abreDetalhe = pid => { P.sel = pid; window.scrollTo(0, 0); renderPainel(); };
 function statusTexto(d) {
+  if (d.J.almocoAberto) return `<span class="pill" style="background:#E8F1FD;color:#1d4f91">Almoço desde ${hm(d.J.almocoIni)}</span>`;
   return d.agora ? `<span class="pill live">Em loja: ${h(d.agora.nome)} desde ${hm(d.agora.v.checkin)}</span>`
     : d.ultima ? `<span class="muted">Saiu de ${h(d.ultima.nome)} às ${hm(d.ultima.v.checkout)}</span>`
     : d.paradas.some(x => x.v) ? '<span class="muted">Iniciou o dia</span>' : `<span class="muted">${P.data === ymd(new Date()) ? 'Ainda não começou' : 'Sem visitas registradas'}</span>`;
@@ -380,19 +398,19 @@ function renderDetalhe(d) {
   const linhas = d.paradas.map(x => {
     const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">Não visitada</span>` : '<span class="pill live">Em loja</span>';
     const al = !v || v.status === 'nao_visitada' ? (v ? `<span class="muted" style="font-size:12px">${h(v.motivo)}</span>` : '') :
-      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y">sem local</span>' : v.distIn != null ? `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn} m</span>` : ''].join(' ');
+      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn} m</span>` : ''].join(' ');
     return `<tr class="${v ? 'click' : ''}" ${v ? `data-v="${h(x.id)}"` : ''}><td>${x.extra ? '+' : x.ordem}</td><td><b>${h(x.nome)}</b><div class="muted" style="font-size:12px">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</div></td>
-      <td>${st}</td><td>${v && v.checkin ? hm(v.checkin) : '—'}</td><td>${v && v.checkout ? hm(v.checkout) : '—'}</td><td>${v && v.checkin && v.checkout ? dur(v.checkin, v.checkout) : '—'}</td><td>${al}</td></tr>`;
+      <td>${st}</td><td>${v && v.checkin ? hm(v.checkin) + '–' + (v.checkout ? hm(v.checkout) : '…') : '—'}</td><td>${v && v.checkin && v.checkout ? dur(v.checkin, v.checkout) : '—'}</td><td class="conf">${al}</td></tr>`;
   }).join('');
   if (box.dataset.modo !== 'det') {
     box.dataset.modo = 'det'; tiraMapa();
     box.innerHTML = `<div class="stack"><div id="p-dhead"></div><div id="p-dest"></div>
       <div class="det-grid"><div class="stack" style="gap:6px"><div id="mapa" class="mapa-det"></div><div class="row" style="gap:8px;font-size:12px" id="p-dgeo"></div></div>
-      <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou</th><th>Saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody id="p-dtab"></tbody></table></div></div></div>
+      <div class="card" style="padding:0"><div class="table-wrap"><table class="num det"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou–saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody id="p-dtab"></tbody></table></div></div></div>
       <div class="muted" style="font-size:12px">Mapa: números = ordem da rota do dia (verde concluída, laranja em loja, branco pendente, vermelho não visitada ou com alerta); tracejado = rota planejada; linha verde = caminho feito pelos check-ins (pontinhos). Lojas com ponto aproximado (pelo endereço) aparecem com borda tracejada. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
   }
   $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
-      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div><div class="muted num" style="font-size:13px;margin-top:2px">${jornadaTxt(d.J)}${d.J.tem && d.J.almoco ? ' · almoço de 1h descontado' : ''}${d.J.fimEst ? ' · * ficou sem check-out na última loja; contado até a última entrada' : ''}</div></div></div>
+      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div><div class="muted num" style="font-size:13px;margin-top:2px">${jornadaTxt(d.J)}${d.J.tem && d.J.almocoMarcado ? ` · almoço ${hm(d.J.almocoIni)}–${d.J.almocoFim ? hm(d.J.almocoFim) : 'agora'} (${hmin(((d.J.almocoFim || Date.now()) - d.J.almocoIni) / 60000)})${d.J.almocoFim && (d.J.almocoFim - d.J.almocoIni) < 3600000 && d.J.bruto > 360 ? ' <span style="color:var(--crit)">menos de 1h</span>' : ''}` : d.J.tem && d.J.almoco ? ' · almoço não marcado: 1h descontada' : ''}${d.J.fimEst ? ' · * ficou sem check-out na última loja; contado até a última entrada' : ''}</div></div></div>
       <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>`;
   $('#p-dest').innerHTML = estrada(d);
   $('#p-dtab').innerHTML = linhas;
@@ -449,6 +467,7 @@ async function detalheVisita(date, id) {
      ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
      ${v.gpsIn && loja ? `<div class="row"><button class="btn sm" id="md-local">Usar este ponto como local da loja</button><a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
      <div><div class="label">Checklist</div>${Object.keys(resp).filter(k => resp[k]).map(k => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(k)}</span><b>${resp[k] === 'sim' ? 'Sim' : 'Não'}</b></div>`).join('') || '<div class="muted">Sem respostas.</div>'}</div>
+     <div><div class="label">Pesquisa de preço</div>${S.pesquisa.map(q => { const x = (v.precos || {})[q.replace(/[.~*/\[\]]/g, '_')]; return `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(q)}</span><b class="num">${!x ? '<span class="muted">não informado</span>' : x.falta ? '<span style="color:var(--crit)">não tem na loja</span>' : brl(x.preco)}</b></div>`; }).join('')}</div>
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}
      <div><div class="label">Fotos</div><div id="md-fotos" class="stack muted">Carregando fotos…</div></div>`}`);
   $('#md-x').onclick = fechaModal;
@@ -871,7 +890,7 @@ function renderConfig() {
   const c = $('#v-config');
   if (c.dataset.ok) { // só atualiza os valores, sem apagar o resultado da importação
     const put = (id, v) => { const el = $(id); if (el && document.activeElement !== el) { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; } };
-    put('#cf-check', S.checklist.join('\n')); put('#cf-raio', S.raio); put('#cf-base', S.regras.base); put('#cf-meta', S.regras.meta); put('#cf-prop', S.regras.prop);
+    put('#cf-check', S.checklist.join('\n')); put('#cf-pesq', S.pesquisa.join('\n')); put('#cf-raio', S.raio); put('#cf-base', S.regras.base); put('#cf-meta', S.regras.meta); put('#cf-prop', S.regras.prop);
     return;
   }
   c.dataset.ok = 1;
@@ -883,10 +902,13 @@ function renderConfig() {
       <label class="field"><span>Faturamento mínimo da rota (R$)</span><input type="number" id="cf-meta" step="1000" value="${S.regras.meta}"></label>
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
       <div><button class="btn primary" id="cf-salvar">Salvar</button></div></div>
+    <div class="card stack"><h3>Pesquisa de preço</h3><p class="muted" style="margin:0;font-size:14px">Produtos que o promotor pesquisa em toda visita (um por linha). Obrigatório para o check-out.</p><textarea id="cf-pesq" rows="4">${h(S.pesquisa.join('\n'))}</textarea><div><button class="btn primary" id="cf-pesq-s">Salvar pesquisa</button></div></div>
     <div class="card stack"><h3>Jornada e banco de horas</h3><p class="muted" style="margin:0;font-size:14px">Carga prevista por dia (horas:minutos). O banco de horas compara com o trabalhado.</p>
       <div class="cargas">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="field"><span>${DIAS[d]}</span><input type="text" data-cg="${d}" inputmode="numeric" value="${hmin(regrasJornada(S.empresa).carga[d]).replace('h', ':')}"></label>`).join('')}</div>
       <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço descontado (minutos)</span><input type="number" id="cf-alm" min="0" step="15" value="${regrasJornada(S.empresa).almocoMin}"></label>
       <label class="field" style="flex:1"><span>Descontar quando a jornada passar de (horas)</span><input type="number" id="cf-almac" min="0" step="0.5" value="${regrasJornada(S.empresa).almocoAcima / 60}"></label></div>
+      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Início previsto do dia</span><input type="time" id="cf-inip" value="${h(regrasJornada(S.empresa).inicioPrevisto)}"></label>
+      <label class="field" style="flex:1"><span>Alerta amarelo após (minutos sem check-in)</span><input type="number" id="cf-tol" min="5" step="5" value="${regrasJornada(S.empresa).tolerancia}"></label></div>
       <label class="field"><span>Início do controle pelo app (dias antes não contam falta)</span><input type="date" id="cf-ini" value="${h(S.empresa.inicioControle || '2026-10-30')}"></label>
       <div><button class="btn primary" id="cf-jor-s">Salvar jornada</button></div></div>
     <div class="card stack"><h3>Dados da empresa nos termos</h3><p class="muted" style="margin:0;font-size:14px">Aparecem nos termos de LGPD e do aparelho que o promotor assina no primeiro acesso.</p>
@@ -903,11 +925,12 @@ function renderConfig() {
     try { await setDoc(doc(db, 'config', 'app'), { raio: +$('#cf-raio').value || 150 }, { merge: true }); await setDoc(doc(db, 'config', 'variavel'), { base: +$('#cf-base').value || 0, meta: +$('#cf-meta').value || 0, prop: $('#cf-prop').checked }); toast('Configurações salvas'); }
     catch (e) { toast(erroMsg(e)); }
   };
+  $('#cf-pesq-s').onclick = () => { const itens = $('#cf-pesq').value.split('\n').map(x => x.trim()).filter(Boolean); if (!itens.length) return toast('Informe pelo menos um produto.'); setDoc(doc(db, 'config', 'pesquisa'), { itens }).then(() => toast('Pesquisa salva'), e => toast(erroMsg(e))); };
   $('#cf-jor-s').onclick = () => {
     const carga = {}; let erro = false;
     document.querySelectorAll('[data-cg]').forEach(i => { const m = i.value.trim().match(/^(\d{1,2})(?:[:h](\d{1,2}))?$/); if (!m) erro = true; else carga[i.dataset.cg] = +m[1] * 60 + (+m[2] || 0); });
     if (erro) return toast('Use o formato 8:00 nas cargas.');
-    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60) } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
+    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60), inicioPrevisto: $('#cf-inip').value || '08:00', tolerancia: +$('#cf-tol').value || 30 } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
   };
   $('#cf-emp-s').onclick = () => setDoc(doc(db, 'config', 'app'), { empresa: $('#cf-emp').value.trim(), cnpj: $('#cf-cnpj').value.trim(), contato: $('#cf-cont').value.trim() }, { merge: true }).then(() => toast('Dados da empresa salvos'), e => toast(erroMsg(e)));
   $('#cf-arq').onchange = e => { const f = e.target.files[0]; if (f) importar(f); };

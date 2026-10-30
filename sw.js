@@ -1,5 +1,5 @@
 // Service worker: guarda o app para abrir sem internet. Sempre tenta a rede primeiro.
-const CACHE = 'rota-np-v17';
+const CACHE = 'rota-np-v18';
 const ARQS = ['./', './index.html', './gestao.html', './css/app.css', './js/fb.js', './js/promotor.js', './js/gestao.js', './js/rosto.js', './js/termos.js', './js/jornada.js', './lib/face-api.esm.js',
   './models/tiny_face_detector_model-weights_manifest.json', './models/tiny_face_detector_model.bin', './models/face_landmark_68_model-weights_manifest.json', './models/face_landmark_68_model.bin', './models/face_recognition_model-weights_manifest.json', './models/face_recognition_model.bin',
   './manifest.webmanifest', './img/icon-192.png', './img/icon-512.png', './img/logo.png', './img/logo-full.png'];
