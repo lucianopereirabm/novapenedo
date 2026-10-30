@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-10-30.7';
+const VERSAO_GESTAO = '2026-10-30.8';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -37,15 +37,19 @@ onAuthStateChanged(auth, async user => {
   $('#shell').hidden = false; $('#versao-g').textContent = 'Versão ' + VERSAO_GESTAO; iniciar();
 });
 
+// escuta o banco; se der erro (sem permissão, sem internet), tenta de novo em 30 s em vez de parar de atualizar
+function escuta(ref, ok, erro) {
+  onSnapshot(ref, ok, e => { if (erro) erro(e); setTimeout(() => escuta(ref, ok), 30000); });
+}
 function iniciar() {
-  onSnapshot(collection(db, 'promotores'), s => { S.promotores = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.nome.localeCompare(b.nome)); S.pronto.p = true; render(); }, e => toast(erroMsg(e)));
-  onSnapshot(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
-  onSnapshot(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; if (['equipe', 'painel'].includes(S.tab)) render(); }, () => {});
-  onSnapshot(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
-  onSnapshot(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
-  onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
-  onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
-  onSnapshot(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
+  escuta(collection(db, 'promotores'), s => { S.promotores = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.nome.localeCompare(b.nome)); S.pronto.p = true; render(); }, e => toast(erroMsg(e)));
+  escuta(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
+  escuta(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; if (['equipe', 'painel'].includes(S.tab)) render(); }, () => {});
+  escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
+  escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
+  escuta(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
+  escuta(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
+  escuta(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
   document.querySelectorAll('.side-item').forEach(b => b.onclick = () => { S.tab = b.dataset.go; lsSet('np.g.tab', S.tab); mostra(); window.scrollTo(0, 0); });
   if (!secoes.includes(S.tab)) S.tab = 'painel';
   mostra(); assinaPainel(); assinaVar();
