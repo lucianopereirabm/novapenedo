@@ -132,21 +132,72 @@ function renderPainel() {
   $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas</span></div><div class="kpi"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas</span></div><div class="kpi"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas (rosto ou GPS)</span></div></div>`;
   const box = $('#p-corpo');
   if (P.sel && dias.some(d => d.pid === P.sel)) return renderDetalhe(dias.find(d => d.pid === P.sel));
-  P.sel = ''; if (P.mapa) { P.mapa.remove(); P.mapa = null; }
-  if (!dias.length) { box.innerHTML = `<div class="empty"><b>Nenhuma rota neste dia</b>As lojas aparecem conforme os dias marcados em Montar rotas.</div>`; return; }
-  box.innerHTML = `<div class="torre">${dias.map(d => {
+  P.sel = '';
+  if (!dias.length) { box.dataset.modo = ''; tiraMapa(); box.innerHTML = `<div class="empty"><b>Nenhuma rota neste dia</b>As lojas aparecem conforme os dias marcados em Montar rotas.</div>`; return; }
+  if (box.dataset.modo !== 'grade') {
+    box.dataset.modo = 'grade'; tiraMapa();
+    box.innerHTML = `<div class="torre-wrap"><div class="stack" style="gap:10px"><div class="torre" id="p-cards"></div>
+      <div class="muted" style="font-size:12px;display:flex;gap:14px;flex-wrap:wrap"><span><span class="pt ok lg"></span> concluída</span><span><span class="pt live lg"></span> em loja</span><span><span class="pt lg"></span> pendente</span><span><span class="pt no lg"></span> não visitada</span><span><span class="pt ok al lg"></span> com alerta</span><span>Clique no promotor para ver o detalhe.</span></div></div>
+      <div class="card mapa-geral stack" style="gap:8px"><div class="spread"><h3 style="margin:0">Onde está cada promotor</h3><span class="muted num" id="p-atual" style="font-size:12px"></span></div><div id="mapa"></div><div id="p-semgps" class="muted" style="font-size:12px"></div></div></div>`;
+  }
+  $('#p-cards').innerHTML = dias.map(d => {
     const pct = d.programadas ? Math.round(d.feitas / d.programadas * 100) : 0;
-    const st = d.agora ? `<span class="pill live">Em loja: ${h(d.agora.nome)} desde ${hm(d.agora.v.checkin)}</span>`
-      : d.ultima ? `<span class="muted">Saiu de ${h(d.ultima.nome)} às ${hm(d.ultima.v.checkout)}</span>`
-      : d.paradas.some(x => x.v) ? '<span class="muted">Iniciou o dia</span>' : `<span class="muted">${P.data === ymd(new Date()) ? 'Ainda não começou' : 'Sem visitas registradas'}</span>`;
     return `<button class="tcard" data-p="${h(d.pid)}">
-      <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b><div class="st">${st}</div></div>
+      <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b><div class="st">${statusTexto(d)}</div></div>
         <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
       ${estrada(d)}
       <div class="spread muted num" style="font-size:12px"><span>${d.primeira ? 'Início ' + hm(d.primeira) : '—'}${d.ultimaSaida ? ' · última saída ' + hm(d.ultimaSaida) : ''}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
-  }).join('')}</div>
-  <div class="muted" style="font-size:12px;display:flex;gap:14px;flex-wrap:wrap"><span><span class="pt ok lg"></span> concluída</span><span><span class="pt live lg"></span> em loja</span><span><span class="pt lg"></span> pendente</span><span><span class="pt no lg"></span> não visitada</span><span><span class="pt ok al lg"></span> com alerta</span><span>Clique no promotor para ver o detalhe e o mapa.</span></div>`;
-  box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { P.sel = b.dataset.p; window.scrollTo(0, 0); renderPainel(); });
+  }).join('');
+  $('#p-cards').querySelectorAll('[data-p]').forEach(b => b.onclick = () => abreDetalhe(b.dataset.p));
+  $('#p-atual').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  mapaGeral(dias);
+}
+const abreDetalhe = pid => { P.sel = pid; window.scrollTo(0, 0); renderPainel(); };
+function statusTexto(d) {
+  return d.agora ? `<span class="pill live">Em loja: ${h(d.agora.nome)} desde ${hm(d.agora.v.checkin)}</span>`
+    : d.ultima ? `<span class="muted">Saiu de ${h(d.ultima.nome)} às ${hm(d.ultima.v.checkout)}</span>`
+    : d.paradas.some(x => x.v) ? '<span class="muted">Iniciou o dia</span>' : `<span class="muted">${P.data === ymd(new Date()) ? 'Ainda não começou' : 'Sem visitas registradas'}</span>`;
+}
+// Última posição conhecida do promotor no dia (check-in, check-out ou registro de não visita)
+function ultimaPosicao(d) {
+  let best = null;
+  d.paradas.forEach(x => { const v = x.v; if (!v) return;
+    if (v.gpsIn && (v.checkin || v.registrado)) { const t = v.checkin || v.registrado; if (!best || t > best.t) best = { t, p: [v.gpsIn.lat, v.gpsIn.lng], x, tipo: v.status === 'nao_visitada' ? 'nao' : v.status === 'em_loja' ? 'em' : 'in' }; }
+    if (v.gpsOut && v.checkout && (!best || v.checkout > best.t)) best = { t: v.checkout, p: [v.gpsOut.lat, v.gpsOut.lng], x, tipo: 'out' }; });
+  return best;
+}
+// mapa (fica montado; a cada atualização só troca as marcações)
+function tiraMapa() { if (P.mapa) { P.mapa.remove(); P.mapa = null; P.mapaChave = ''; } }
+function garanteMapa(chave) {
+  const el = $('#mapa'); if (!el || !window.L) return null;
+  if (P.mapa && P.mapaChave === chave && P.mapa.getContainer() === el) { P.camada.clearLayers(); P.mapa.invalidateSize(); return P.mapa; }
+  tiraMapa();
+  P.mapa = L.map(el, { scrollWheelZoom: false }).setView([-22.5, -44.1], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(P.mapa);
+  P.camada = L.layerGroup().addTo(P.mapa); P.mapaChave = chave; P.ajustar = true;
+  setTimeout(() => P.mapa && P.mapa.invalidateSize(), 60);
+  return P.mapa;
+}
+function enquadra(pts) { if (P.ajustar && pts.length) { P.mapa.fitBounds(pts, { padding: [40, 40], maxZoom: 15 }); P.ajustar = false; } }
+function mapaGeral(dias) {
+  if (!window.L) { setTimeout(() => { if (!P.sel && S.tab === 'painel') mapaGeral(dias); }, 400); return; }
+  const m = garanteMapa('geral|' + P.data); if (!m) return;
+  const pts = [], sem = [];
+  dias.forEach(d => {
+    const cor = corDe(d.pid);
+    const trilha = d.paradas.filter(x => x.v && x.v.gpsIn && x.v.status !== 'nao_visitada').sort((a, b) => a.v.checkin - b.v.checkin).map(x => [x.v.gpsIn.lat, x.v.gpsIn.lng]);
+    if (trilha.length > 1) L.polyline(trilha, { color: cor, weight: 3, opacity: .55 }).addTo(P.camada);
+    const u = ultimaPosicao(d); if (!u) { sem.push(nomeCurto(d.pid)); return; }
+    pts.push(u.p);
+    const r = S.rostos[d.pid]; const anel = u.tipo === 'em' ? '#F2994A' : u.tipo === 'nao' ? '#999' : '#27AE60';
+    const dentro = r && r.foto ? `<img src="${r.foto}" alt="">` : `<span style="background:${cor}">${h(iniciais(promNome(d.pid)))}</span>`;
+    const quando = u.tipo === 'em' ? `Em loja: <b>${h(u.x.nome)}</b><br>check-in às ${hm(u.t)}` : u.tipo === 'out' ? `Saiu de <b>${h(u.x.nome)}</b> às ${hm(u.t)}` : u.tipo === 'nao' ? `Registrou não visita em <b>${h(u.x.nome)}</b> às ${hm(u.t)}` : `Check-in em <b>${h(u.x.nome)}</b> às ${hm(u.t)}`;
+    L.marker(u.p, { icon: L.divIcon({ className: '', html: `<div class="pin-p ${u.tipo === 'em' ? 'vivo' : ''}" style="--anel:${anel}">${dentro}<b>${h(nomeCurto(d.pid).split(' ')[0])}</b></div>`, iconSize: [44, 58], iconAnchor: [22, 22] }) })
+      .bindTooltip(`<b>${h(nomeCurto(d.pid))}</b><br>${quando}<br>${d.feitas} de ${d.programadas} visitas`, { direction: 'top', offset: [0, -20] })
+      .on('click', () => abreDetalhe(d.pid)).addTo(P.camada);
+  });
+  enquadra(pts);
+  $('#p-semgps').textContent = sem.length ? 'Sem posição no dia: ' + sem.join(', ') + '.' : 'Foto do promotor na última posição registrada (anel laranja = em loja agora). Passe o mouse para ver os detalhes e clique para abrir o promotor.';
 }
 function renderDetalhe(d) {
   const box = $('#p-corpo');
@@ -157,37 +208,37 @@ function renderDetalhe(d) {
     return `<tr class="${v ? 'click' : ''}" ${v ? `data-v="${h(x.id)}"` : ''}><td>${x.extra ? '+' : x.ordem}</td><td><b>${h(x.nome)}</b><div class="muted" style="font-size:12px">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</div></td>
       <td>${st}</td><td>${v && v.checkin ? hm(v.checkin) : '—'}</td><td>${v && v.checkout ? hm(v.checkout) : '—'}</td><td>${v && v.checkin && v.checkout ? dur(v.checkin, v.checkout) : '—'}</td><td>${al}</td></tr>`;
   }).join('');
-  box.innerHTML = `<div class="stack">
-    <div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
-      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div></div></div>
-      <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>
-    ${estrada(d)}
-    <div class="det-grid"><div id="mapa" style="height:460px"></div>
-    <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou</th><th>Saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody>${linhas}</tbody></table></div></div></div>
-    <div class="muted" style="font-size:12px">Mapa: pontos numerados = check-ins na ordem em que aconteceram, linha verde = trajeto feito; círculos vazados = lojas da rota com local cadastrado. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
+  if (box.dataset.modo !== 'det') {
+    box.dataset.modo = 'det'; tiraMapa();
+    box.innerHTML = `<div class="stack"><div id="p-dhead"></div><div id="p-dest"></div>
+      <div class="det-grid"><div id="mapa" style="height:460px"></div>
+      <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou</th><th>Saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody id="p-dtab"></tbody></table></div></div></div>
+      <div class="muted" style="font-size:12px">Mapa: pontos numerados = check-ins na ordem em que aconteceram, linha verde = trajeto feito; círculos vazados = lojas da rota com local cadastrado. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
+  }
+  $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
+      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div></div></div>
+      <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>`;
+  $('#p-dest').innerHTML = estrada(d);
+  $('#p-dtab').innerHTML = linhas;
   $('#p-volta').onclick = () => { P.sel = ''; renderPainel(); };
   $('#p-outro').onchange = e => { P.sel = e.target.value; renderPainel(); };
-  box.querySelectorAll('tr[data-v]').forEach(tr => tr.onclick = () => detalheVisita(P.data, tr.dataset.v));
+  $('#p-dtab').querySelectorAll('tr[data-v]').forEach(tr => tr.onclick = () => detalheVisita(P.data, tr.dataset.v));
   desenhaMapa(d);
 }
 function desenhaMapa(d) {
-  if (!window.L) { setTimeout(() => desenhaMapa(d), 400); return; }
-  if (P.mapa) { P.mapa.remove(); P.mapa = null; }
-  const el = $('#mapa'); if (!el) return;
-  P.mapa = L.map(el, { scrollWheelZoom: false }).setView([-22.5, -44.1], 9);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(P.mapa);
+  if (!window.L) { setTimeout(() => { if (P.sel === d.pid) desenhaMapa(d); }, 400); return; }
+  const m = garanteMapa('det|' + d.pid + '|' + P.data); if (!m) return;
   const pts = [];
-  d.paradas.forEach(x => { const l = S.lojas.find(y => y.id === x.lojaId); if (l && l.lat != null) { pts.push([+l.lat, +l.lng]); L.circleMarker([+l.lat, +l.lng], { radius: 7, color: '#2C7A47', weight: 2, fillOpacity: 0 }).bindPopup(`Loja: <b>${h(l.nome)}</b> (${h(l.codigo)})${x.ordem ? '<br>' + x.ordem + 'ª da rota' : ''}`).addTo(P.mapa); } });
+  d.paradas.forEach(x => { const l = S.lojas.find(y => y.id === x.lojaId); if (l && l.lat != null) { pts.push([+l.lat, +l.lng]); L.circleMarker([+l.lat, +l.lng], { radius: 7, color: '#2C7A47', weight: 2, fillOpacity: 0 }).bindPopup(`Loja: <b>${h(l.nome)}</b> (${h(l.codigo)})${x.ordem ? '<br>' + x.ordem + 'ª da rota' : ''}`).addTo(P.camada); } });
   const feitos = d.paradas.filter(x => x.v && x.v.gpsIn).sort((a, b) => (a.v.checkin || a.v.registrado || 0) - (b.v.checkin || b.v.registrado || 0));
-  if (feitos.length > 1) L.polyline(feitos.map(x => [x.v.gpsIn.lat, x.v.gpsIn.lng]), { color: '#27AE60', weight: 5, opacity: .85 }).addTo(P.mapa);
+  if (feitos.length > 1) L.polyline(feitos.map(x => [x.v.gpsIn.lat, x.v.gpsIn.lng]), { color: '#27AE60', weight: 5, opacity: .85 }).addTo(P.camada);
   feitos.forEach((x, i) => {
     const v = x.v; const p = [v.gpsIn.lat, v.gpsIn.lng]; pts.push(p);
     const cor = v.status === 'nao_visitada' ? '#999' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)) ? '#EB5757' : '#27AE60';
     L.marker(p, { icon: L.divIcon({ className: '', html: `<div class="mk" style="background:${cor}">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
-      .bindPopup(`<b>${h(x.nome)}</b><br>${v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${v.distIn != null ? '<br>' + v.distIn + ' m da loja' : ''}`).addTo(P.mapa);
+      .bindPopup(`<b>${h(x.nome)}</b><br>${v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${v.distIn != null ? '<br>' + v.distIn + ' m da loja' : ''}`).addTo(P.camada);
   });
-  if (pts.length) P.mapa.fitBounds(pts, { padding: [30, 30], maxZoom: 15 });
-  setTimeout(() => P.mapa && P.mapa.invalidateSize(), 60);
+  enquadra(pts);
 }
 // Mostra quando o registro feito no celular chegou ao sistema (registros sem sinal chegam depois)
 const ms = t => t && typeof t.toMillis === 'function' ? t.toMillis() : (typeof t === 'number' ? t : null);
