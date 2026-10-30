@@ -33,7 +33,16 @@
       <span id="lg-msg" class="muted" style="min-height:18px;font-size:13px"></span>
       <button class="btn primary big" type="submit" id="lg-btn">Entrar</button>
     </form>
-    <p class="muted" style="font-size:13px;text-align:center">Esqueceu a senha? Fale com o supervisor.<br><a href="gestao.html" class="btn ghost">Acesso da gestão</a></p>
+    <p class="muted" style="font-size:13px;text-align:center">O login e a senha são digitados pelo supervisor no primeiro acesso deste celular. Depois, o app abre pelo reconhecimento do rosto.<br><a href="gestao.html" class="btn ghost">Acesso da gestão</a></p>
+  </section>
+
+  <!-- RECONHECIMENTO DO ROSTO -->
+  <section id="v-rosto" class="stack" hidden>
+    <div><div class="label">Confirme que é você</div><h2 id="ro-nome" style="font-size:26px"></h2></div>
+    <div class="cam rosto-cam"><video id="ro-v" playsinline autoplay muted></video><div class="rosto-guia"></div></div>
+    <div id="ro-st" class="note">Toque em <b>Reconhecer meu rosto</b> e olhe para a câmera.</div>
+    <button class="btn primary big" id="ro-ok">Reconhecer meu rosto</button>
+    <button class="btn ghost" id="ro-sup">Liberar com a senha do supervisor</button>
   </section>
 
   <section id="v-semacesso" class="empty" hidden><b>Acesso ainda não liberado</b>Seu login existe, mas não está ligado a nenhum promotor. Fale com o supervisor.</section>

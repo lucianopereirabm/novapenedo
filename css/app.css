@@ -159,3 +159,40 @@ tr.click:hover td{background:var(--sunk)}
 .rede{position:fixed;left:0;right:0;top:0;z-index:200;padding:calc(env(safe-area-inset-top,0px) + 6px) 14px 6px;font-size:12.5px;font-weight:600;text-align:center;pointer-events:none;line-height:1.3}
 .rede.off{background:#3a2a00;color:#ffd666}
 .rede.env{background:#0f3d2a;color:#b9f5d4}
+
+/* reconhecimento do rosto */
+.rosto-cam{position:relative;aspect-ratio:3/4;max-height:52vh;margin:0 auto;width:100%;border-radius:18px;overflow:hidden;background:#000}
+.rosto-cam video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.rosto-guia{position:absolute;inset:14% 20% 20%;border:3px dashed rgba(255,255,255,.7);border-radius:50%;pointer-events:none;transition:border-color .2s}
+.rosto-cam.ok .rosto-guia{border:4px solid #3ddc84}
+.rosto-cam.no .rosto-guia{border-color:#ff6b6b}
+.rostomini{width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--sunk);display:inline-block;vertical-align:middle}
+
+/* torre de controle */
+.av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;object-fit:cover;color:#fff;font-weight:700;font-size:15px;flex:none}
+.torre{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.tcard{display:flex;flex-direction:column;gap:12px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;color:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.tcard:hover{border-color:var(--brand-y);box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.tcard .nm{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tcard .st{font-size:12.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tcard .cont{text-align:right;line-height:1}.tcard .cont b{font-size:26px}.tcard .cont span{color:var(--muted);font-size:15px}
+.estrada{position:relative;height:22px;margin:0 9px}
+.estrada .trilho,.estrada .feito{position:absolute;left:0;top:9px;height:4px;border-radius:4px}
+.estrada .trilho{right:0;background:var(--sunk)}
+.estrada .feito{background:#27AE60;box-shadow:0 0 0 1px rgba(39,174,96,.25)}
+.estrada .pt{position:absolute;top:4px;margin-left:-7px}
+.pt{display:inline-block;width:14px;height:14px;border-radius:50%;background:var(--surface);border:3px solid var(--line);vertical-align:middle}
+.pt.ok{background:#27AE60;border-color:#27AE60}
+.pt.ok.al{background:#EB5757;border-color:#27AE60}
+.pt.live{background:#F2994A;border-color:#F2994A;animation:pulso 1.4s infinite}
+.pt.no{background:var(--surface);border-color:#EB5757}
+.pt.lg{position:static;margin:0 3px 0 0}
+@keyframes pulso{0%{box-shadow:0 0 0 0 rgba(242,153,74,.6)}70%{box-shadow:0 0 0 8px rgba(242,153,74,0)}100%{box-shadow:0 0 0 0 rgba(242,153,74,0)}}
+.kpi b small{font-size:.55em;color:var(--muted);font-weight:600}
+.mk{width:26px;height:26px;border-radius:50%;color:#fff;font:700 12px/26px var(--f-body,sans-serif);text-align:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.note.crit{background:var(--crit-soft);color:var(--ink)}
+.note.ok{background:var(--ok-soft);color:var(--ink)}
+
+.det-grid{display:grid;gap:12px;align-items:start}
+@media (min-width:1100px){.det-grid{grid-template-columns:minmax(0,2fr) minmax(0,3fr)}}
+.det-grid td .tag{white-space:nowrap}

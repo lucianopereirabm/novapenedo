@@ -5,6 +5,7 @@ import {
   criarAcessoPromotor, apagarContaPromotor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
+import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
@@ -12,7 +13,7 @@ const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com 
 const CORES = ['#E0457B', '#2F80ED', '#27AE60', '#F2994A', '#9B51E0', '#00A3A3', '#B8860B', '#EB5757', '#56CCF2', '#6FCF97', '#BB6BD9', '#333F99'];
 const LOGO = 'img/logo.png';
 
-const S = { promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
+const S = { rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
   tab: lsGet('np.g.tab') || 'painel', pronto: { p: false, l: false } };
 const secoes = ['painel', 'montar', 'cli', 'var', 'equipe', 'config'];
 
@@ -36,6 +37,7 @@ onAuthStateChanged(auth, async user => {
 function iniciar() {
   onSnapshot(collection(db, 'promotores'), s => { S.promotores = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.nome.localeCompare(b.nome)); S.pronto.p = true; render(); }, e => toast(erroMsg(e)));
   onSnapshot(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
+  onSnapshot(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; if (['equipe', 'painel'].includes(S.tab)) render(); }, () => {});
   onSnapshot(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
   onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
   onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
@@ -78,72 +80,114 @@ function assinaPainel() {
   P.vis = {};
   P.unsub = onSnapshot(collection(db, 'dias', P.data, 'visitas'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); P.vis = m; if (S.tab === 'painel') renderPainel(); }, e => toast(erroMsg(e)));
 }
+// Resumo do dia de um promotor: paradas na ordem da rota + visitas fora da rota
+function diaDoPromotor(pid) {
+  const lojas = lojasDoDia(pid, P.data);
+  const paradas = lojas.map((l, i) => ({ ordem: i + 1, lojaId: l.id, nome: l.nome, codigo: l.codigo, bairro: l.bairro || l.municipio || '', id: l.id + '_' + pid, v: P.vis[l.id + '_' + pid] }));
+  Object.entries(P.vis).filter(([k, v]) => v.promotorId === pid && !paradas.some(x => x.id === k))
+    .forEach(([k, v]) => paradas.push({ ordem: null, lojaId: v.lojaId, nome: v.lojaNome, codigo: v.codigo, bairro: v.cidade || '', id: k, v, extra: true }));
+  const vs = paradas.filter(x => x.v);
+  const feitas = paradas.filter(x => !x.extra && x.v && x.v.status === 'concluida').length;
+  const extras = paradas.filter(x => x.extra && x.v && x.v.status !== 'nao_visitada').length;
+  const nao = vs.filter(x => x.v.status === 'nao_visitada').length;
+  const agora = vs.find(x => x.v.status === 'em_loja');
+  const ents = vs.map(x => x.v.checkin).filter(Boolean), sais = vs.map(x => x.v.checkout).filter(Boolean);
+  const tempo = vs.reduce((a, x) => a + (x.v.checkin && x.v.checkout ? x.v.checkout - x.v.checkin : 0), 0);
+  const alertas = vs.filter(x => x.v.rostoOk === false || (x.v.distIn != null && x.v.distIn > S.raio)).length;
+  const ultima = vs.filter(x => x.v.checkout).sort((a, b) => b.v.checkout - a.v.checkout)[0];
+  return { pid, paradas, programadas: lojas.length, feitas, extras, nao, agora, primeira: ents.length ? Math.min(...ents) : null, ultimaSaida: sais.length ? Math.max(...sais) : null, ultima, tempo, alertas };
+}
+const nomeCurto = id => { const w = promNome(id).split(' ').filter(x => x && !['da', 'de', 'do', 'das', 'dos', 'e'].includes(x.toLowerCase())); return w.length > 1 ? w[0] + ' ' + w[w.length - 1] : w[0] || ''; };
+const iniciais = n => String(n || '?').split(' ').filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase();
+const avatar = (pid, tam = 44) => { const r = S.rostos[pid]; return r && r.foto ? `<img class="av" src="${r.foto}" alt="" style="width:${tam}px;height:${tam}px">` : `<span class="av" style="width:${tam}px;height:${tam}px;background:${corDe(pid)}">${h(iniciais(promNome(pid)))}</span>`; };
+// A "estradinha": a rota do dia em ordem, verde até onde já foi feito
+function estrada(d) {
+  const ps = d.paradas.filter(x => !x.extra); if (!ps.length) return '<div class="muted" style="font-size:12px">Sem rota neste dia</div>';
+  let ult = -1; ps.forEach((x, i) => { if (x.v) ult = i; });
+  const pct = ps.length > 1 ? ult / (ps.length - 1) * 100 : (ult >= 0 ? 100 : 0);
+  return `<div class="estrada"><div class="trilho"></div><div class="feito" style="width:${Math.max(0, pct)}%"></div>
+    ${ps.map((x, i) => { const v = x.v; const c = !v ? '' : v.status === 'concluida' ? (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio) ? 'ok al' : 'ok') : v.status === 'em_loja' ? 'live' : 'no';
+      const tip = `${i + 1}. ${x.nome}${v ? (v.status === 'nao_visitada' ? ' · não visitada: ' + v.motivo : ' · ' + hm(v.checkin) + (v.checkout ? '–' + hm(v.checkout) : ' (em loja)')) : ' · pendente'}`;
+      return `<span class="pt ${c}" style="left:${ps.length > 1 ? i / (ps.length - 1) * 100 : 50}%" title="${h(tip)}"></span>`; }).join('')}</div>`;
+}
 function renderPainel() {
   const c = $('#v-painel');
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
-    c.innerHTML = `<div class="spread" style="flex-wrap:wrap"><h2>Monitoramento</h2><div class="row"><select id="p-prom" style="width:auto"></select><input type="date" id="p-data" style="width:auto"></div></div>
-      <div id="p-kpis"></div><div id="mapa"></div><div id="p-legenda" class="row" style="font-size:13px"></div><div id="p-corpo" class="grid2"></div>`;
+    c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div><h2 style="margin:0">Torre de controle</h2><div class="muted" id="p-sub" style="font-size:13px"></div></div>
+      <div class="row"><button class="btn sm" id="p-ant" aria-label="Dia anterior">‹</button><input type="date" id="p-data" style="width:auto"><button class="btn sm" id="p-prox" aria-label="Próximo dia">›</button><button class="btn sm" id="p-hoje">Hoje</button></div></div>
+      <div id="p-kpis"></div><div id="p-corpo"></div>`;
     $('#p-data').value = P.data;
-    $('#p-data').onchange = e => { if (!e.target.value) return; P.data = e.target.value; assinaPainel(); renderPainel(); };
-    $('#p-prom').onchange = e => { P.sel = e.target.value; renderPainel(); };
+    const muda = dt => { P.data = dt; $('#p-data').value = dt; assinaPainel(); renderPainel(); };
+    $('#p-data').onchange = e => { if (e.target.value) muda(e.target.value); };
+    const soma = n => { const d = new Date(P.data + 'T12:00:00'); d.setDate(d.getDate() + n); muda(ymd(d)); };
+    $('#p-ant').onclick = () => soma(-1); $('#p-prox').onclick = () => soma(1); $('#p-hoje').onclick = () => muda(ymd(new Date()));
   }
   if (vazioCarregando()) { $('#p-corpo').innerHTML = '<div class="empty">Carregando…</div>'; return; }
-  const sel = $('#p-prom'); const cur = P.sel;
-  sel.innerHTML = '<option value="">Todos os promotores</option>' + S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}">${h(p.nome)}</option>`).join('');
-  sel.value = cur;
-  const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id));
-  Object.values(P.vis).forEach(v => ids.add(v.promotorId));
-  let plan = 0, feitas = 0, nao = 0, live = 0;
-  const blocos = [...ids].filter(pid => !P.sel || pid === P.sel).map(pid => {
-    const lojas = lojasDoDia(pid, P.data);
-    const linhas = lojas.map((l, i) => ({ ordem: i + 1, l, nome: l.nome, codigo: l.codigo, id: l.id + '_' + pid, v: P.vis[l.id + '_' + pid] }));
-    Object.entries(P.vis).filter(([k, v]) => v.promotorId === pid && !linhas.some(x => x.id === k)).forEach(([k, v]) => linhas.push({ ordem: null, nome: v.lojaNome, codigo: v.codigo, id: k, v, extra: true }));
-    if (!linhas.length) return '';
-    plan += lojas.length;
-    linhas.forEach(x => { if (!x.v) return; if (x.v.status === 'concluida') feitas++; else if (x.v.status === 'nao_visitada') nao++; else live++; });
-    const ok = linhas.filter(x => x.v && x.v.status === 'concluida').length;
-    const tempo = linhas.reduce((s, x) => s + (x.v && x.v.checkin && x.v.checkout ? x.v.checkout - x.v.checkin : 0), 0);
-    return `<div class="card stack"><div class="spread"><h3><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${corDe(pid)};margin-right:6px"></span>${h(promNome(pid))}</h3><span class="muted num" style="font-size:13px">${ok}/${lojas.length}${tempo ? ' · ' + dur(1, 1 + tempo) + ' em loja' : ''}</span></div>
-      <div class="table-wrap"><table class="num"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Entrada</th><th>Saída</th><th>GPS</th></tr></thead><tbody>
-      ${linhas.map(x => {
-        const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">${h(v.motivo)}</span>` : '<span class="pill live">Em loja</span>';
-        const gps = !v || v.status === 'nao_visitada' ? '—' : v.semCoord ? '<span class="tag y">sem local</span>' : v.distIn == null ? '—' : `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn} m</span>`;
-        return `<tr class="${v ? 'click' : ''}" ${v ? `data-v="${h(x.id)}"` : ''}><td>${x.extra ? '+' : x.ordem}</td><td>${h(x.nome)}<div class="muted" style="font-size:12px">${h(x.codigo || '')}${x.extra ? ' · fora da rota' : ''}</div></td><td>${st}</td><td>${v ? hm(v.checkin) : '—'}</td><td>${v ? hm(v.checkout) : '—'}</td><td>${gps}</td></tr>`;
-      }).join('')}</tbody></table></div></div>`;
-  }).join('');
-  $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${plan}</b><span>Lojas na rota</span></div><div class="kpi"><b style="color:var(--ok)">${feitas}</b><span>Concluídas</span></div><div class="kpi"><b style="color:var(--warn)">${live}</b><span>Em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${nao}</b><span>Não visitadas</span></div></div>`;
-  $('#p-corpo').innerHTML = blocos || `<div class="empty"><b>Nenhuma rota em ${DIAS_LONGO[diaSemana(P.data)]}, ${dataBR(P.data)}</b>As lojas aparecem conforme os dias marcados em Montar rotas.</div>`;
-  $('#p-corpo').querySelectorAll('tr[data-v]').forEach(tr => tr.onclick = () => detalheVisita(P.data, tr.dataset.v));
-  desenhaMapa();
+  $('#p-sub').textContent = `${DIAS_LONGO[diaSemana(P.data)].replace(/^./, x => x.toUpperCase())}, ${dataBR(P.data)}${P.data === ymd(new Date()) ? ' · ao vivo' : ''}`;
+  const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id)); Object.values(P.vis).forEach(v => ids.add(v.promotorId));
+  const dias = [...ids].map(diaDoPromotor).filter(d => d.programadas || d.paradas.length)
+    .sort((a, b) => promNome(a.pid).localeCompare(promNome(b.pid)));
+  const T = dias.reduce((t, d) => ({ prog: t.prog + d.programadas, feitas: t.feitas + d.feitas, live: t.live + (d.agora ? 1 : 0), nao: t.nao + d.nao, al: t.al + d.alertas, extras: t.extras + d.extras }), { prog: 0, feitas: 0, live: 0, nao: 0, al: 0, extras: 0 });
+  $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas</span></div><div class="kpi"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas</span></div><div class="kpi"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas (rosto ou GPS)</span></div></div>`;
+  const box = $('#p-corpo');
+  if (P.sel && dias.some(d => d.pid === P.sel)) return renderDetalhe(dias.find(d => d.pid === P.sel));
+  P.sel = ''; if (P.mapa) { P.mapa.remove(); P.mapa = null; }
+  if (!dias.length) { box.innerHTML = `<div class="empty"><b>Nenhuma rota neste dia</b>As lojas aparecem conforme os dias marcados em Montar rotas.</div>`; return; }
+  box.innerHTML = `<div class="torre">${dias.map(d => {
+    const pct = d.programadas ? Math.round(d.feitas / d.programadas * 100) : 0;
+    const st = d.agora ? `<span class="pill live">Em loja: ${h(d.agora.nome)} desde ${hm(d.agora.v.checkin)}</span>`
+      : d.ultima ? `<span class="muted">Saiu de ${h(d.ultima.nome)} às ${hm(d.ultima.v.checkout)}</span>`
+      : d.paradas.some(x => x.v) ? '<span class="muted">Iniciou o dia</span>' : `<span class="muted">${P.data === ymd(new Date()) ? 'Ainda não começou' : 'Sem visitas registradas'}</span>`;
+    return `<button class="tcard" data-p="${h(d.pid)}">
+      <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b><div class="st">${st}</div></div>
+        <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
+      ${estrada(d)}
+      <div class="spread muted num" style="font-size:12px"><span>${d.primeira ? 'Início ' + hm(d.primeira) : '—'}${d.ultimaSaida ? ' · última saída ' + hm(d.ultimaSaida) : ''}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
+  }).join('')}</div>
+  <div class="muted" style="font-size:12px;display:flex;gap:14px;flex-wrap:wrap"><span><span class="pt ok lg"></span> concluída</span><span><span class="pt live lg"></span> em loja</span><span><span class="pt lg"></span> pendente</span><span><span class="pt no lg"></span> não visitada</span><span><span class="pt ok al lg"></span> com alerta</span><span>Clique no promotor para ver o detalhe e o mapa.</span></div>`;
+  box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { P.sel = b.dataset.p; window.scrollTo(0, 0); renderPainel(); });
 }
-function desenhaMapa() {
-  if (!window.L) { setTimeout(desenhaMapa, 400); return; }
-  if (!P.mapa) {
-    P.mapa = L.map('mapa', { scrollWheelZoom: false }).setView([-22.5, -44.1], 9);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(P.mapa);
-  }
-  if (P.camada) P.camada.remove();
-  P.camada = L.layerGroup().addTo(P.mapa);
-  const pts = []; const porProm = {};
-  Object.entries(P.vis).forEach(([id, v]) => {
-    if (P.sel && v.promotorId !== P.sel) return;
-    if (!v.gpsIn) return;
-    const p = [v.gpsIn.lat, v.gpsIn.lng]; pts.push(p);
-    (porProm[v.promotorId] = porProm[v.promotorId] || []).push({ t: v.checkin || v.registrado || 0, p });
-    const cor = corDe(v.promotorId);
-    L.circleMarker(p, { radius: 8, color: '#fff', weight: 2, fillColor: v.status === 'nao_visitada' ? '#999' : cor, fillOpacity: 1 })
-      .bindPopup(`<b>${h(v.lojaNome)}</b><br>${h(prim(v.promotorId))} · ${v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : hm(v.checkin) + '–' + hm(v.checkout)}${v.distIn != null ? '<br>' + v.distIn + ' m da loja' : ''}`)
-      .on('click', () => {}).addTo(P.camada);
+function renderDetalhe(d) {
+  const box = $('#p-corpo');
+  const linhas = d.paradas.map(x => {
+    const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">Não visitada</span>` : '<span class="pill live">Em loja</span>';
+    const al = !v || v.status === 'nao_visitada' ? (v ? `<span class="muted" style="font-size:12px">${h(v.motivo)}</span>` : '') :
+      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y">sem local</span>' : v.distIn != null ? `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn} m</span>` : ''].join(' ');
+    return `<tr class="${v ? 'click' : ''}" ${v ? `data-v="${h(x.id)}"` : ''}><td>${x.extra ? '+' : x.ordem}</td><td><b>${h(x.nome)}</b><div class="muted" style="font-size:12px">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</div></td>
+      <td>${st}</td><td>${v && v.checkin ? hm(v.checkin) : '—'}</td><td>${v && v.checkout ? hm(v.checkout) : '—'}</td><td>${v && v.checkin && v.checkout ? dur(v.checkin, v.checkout) : '—'}</td><td>${al}</td></tr>`;
+  }).join('');
+  box.innerHTML = `<div class="stack">
+    <div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
+      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div></div></div>
+      <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>
+    ${estrada(d)}
+    <div class="det-grid"><div id="mapa" style="height:460px"></div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>#</th><th>Loja</th><th>Status</th><th>Chegou</th><th>Saiu</th><th>Tempo</th><th>Conferência</th></tr></thead><tbody>${linhas}</tbody></table></div></div></div>
+    <div class="muted" style="font-size:12px">Mapa: pontos numerados = check-ins na ordem em que aconteceram, linha verde = trajeto feito; círculos vazados = lojas da rota com local cadastrado. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
+  $('#p-volta').onclick = () => { P.sel = ''; renderPainel(); };
+  $('#p-outro').onchange = e => { P.sel = e.target.value; renderPainel(); };
+  box.querySelectorAll('tr[data-v]').forEach(tr => tr.onclick = () => detalheVisita(P.data, tr.dataset.v));
+  desenhaMapa(d);
+}
+function desenhaMapa(d) {
+  if (!window.L) { setTimeout(() => desenhaMapa(d), 400); return; }
+  if (P.mapa) { P.mapa.remove(); P.mapa = null; }
+  const el = $('#mapa'); if (!el) return;
+  P.mapa = L.map(el, { scrollWheelZoom: false }).setView([-22.5, -44.1], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(P.mapa);
+  const pts = [];
+  d.paradas.forEach(x => { const l = S.lojas.find(y => y.id === x.lojaId); if (l && l.lat != null) { pts.push([+l.lat, +l.lng]); L.circleMarker([+l.lat, +l.lng], { radius: 7, color: '#2C7A47', weight: 2, fillOpacity: 0 }).bindPopup(`Loja: <b>${h(l.nome)}</b> (${h(l.codigo)})${x.ordem ? '<br>' + x.ordem + 'ª da rota' : ''}`).addTo(P.mapa); } });
+  const feitos = d.paradas.filter(x => x.v && x.v.gpsIn).sort((a, b) => (a.v.checkin || a.v.registrado || 0) - (b.v.checkin || b.v.registrado || 0));
+  if (feitos.length > 1) L.polyline(feitos.map(x => [x.v.gpsIn.lat, x.v.gpsIn.lng]), { color: '#27AE60', weight: 5, opacity: .85 }).addTo(P.mapa);
+  feitos.forEach((x, i) => {
+    const v = x.v; const p = [v.gpsIn.lat, v.gpsIn.lng]; pts.push(p);
+    const cor = v.status === 'nao_visitada' ? '#999' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)) ? '#EB5757' : '#27AE60';
+    L.marker(p, { icon: L.divIcon({ className: '', html: `<div class="mk" style="background:${cor}">${i + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
+      .bindPopup(`<b>${h(x.nome)}</b><br>${v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${v.distIn != null ? '<br>' + v.distIn + ' m da loja' : ''}`).addTo(P.mapa);
   });
-  // locais cadastrados das lojas da rota do dia
-  S.lojas.filter(l => l.lat != null && l.promotorId && (!P.sel || l.promotorId === P.sel) && (l.dias || []).map(Number).includes(diaSemana(P.data))).forEach(l => {
-    L.circleMarker([+l.lat, +l.lng], { radius: 5, color: corDe(l.promotorId), weight: 2, fillOpacity: 0 }).bindPopup(`Loja: <b>${h(l.nome)}</b> (${h(l.codigo)})`).addTo(P.camada);
-  });
-  Object.entries(porProm).forEach(([pid, arr]) => { if (arr.length > 1) L.polyline(arr.sort((a, b) => a.t - b.t).map(x => x.p), { color: corDe(pid), weight: 3, opacity: .7, dashArray: '6 6' }).addTo(P.camada); });
   if (pts.length) P.mapa.fitBounds(pts, { padding: [30, 30], maxZoom: 15 });
-  setTimeout(() => P.mapa.invalidateSize(), 50);
-  $('#p-legenda').innerHTML = Object.keys(porProm).map(pid => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${corDe(pid)}"></span> ${h(prim(pid))}</span>`).join('') + (pts.length ? '<span class="muted">· círculo vazado = local cadastrado da loja · tracejado = trajeto do dia</span>' : '<span class="muted">Sem check-ins com GPS nesta data.</span>');
+  setTimeout(() => P.mapa && P.mapa.invalidateSize(), 60);
 }
 // Mostra quando o registro feito no celular chegou ao sistema (registros sem sinal chegam depois)
 const ms = t => t && typeof t.toMillis === 'function' ? t.toMillis() : (typeof t === 'number' ? t : null);
@@ -164,6 +208,7 @@ async function detalheVisita(date, id) {
     `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout)}</b></div></div>
      <div class="note ${v.semCoord ? 'warn' : v.distIn > S.raio ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m da loja` : ''}${v.distOut != null ? ` · check-out a ${v.distOut} m` : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
      ${linhaEnvio(v)}
+     ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
      ${v.gpsIn && loja ? `<div class="row"><button class="btn sm" id="md-local">Usar este ponto como local da loja</button><a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
      <div><div class="label">Checklist</div>${Object.keys(resp).filter(k => resp[k]).map(k => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(k)}</span><b>${resp[k] === 'sim' ? 'Sim' : 'Não'}</b></div>`).join('') || '<div class="muted">Sem respostas.</div>'}</div>
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}
@@ -455,7 +500,7 @@ function renderEquipe() {
   c.innerHTML = `<div class="spread"><h2>Equipe e acessos</h2><button class="btn primary" id="eq-novo">+ Novo promotor</button></div>
     <div class="note">O promotor entra no app com o <b>login</b> e a <b>senha</b> abaixo. Para mudar, clique em <b>Editar</b>. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th></th></tr></thead><tbody>
-    ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}<div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
+    ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 40)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
       <td style="font-size:13px">${h(p.telefone || '')}<div class="muted">${h(p.email || '')}</div></td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td>
       <td class="r"><button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></td></tr>`; }).join('')}
@@ -470,17 +515,34 @@ function editaPromotor(p) {
   const novo = !p; p = p || { ativo: true };
   const a = novo ? null : S.acessos[p.id];
   abreModal(`<div class="spread"><h3>${novo ? 'Novo promotor' : h(p.nome)}</h3><button class="btn ghost" id="ep-x">Fechar</button></div>
-    <form id="ep" class="stack"><label class="field"><span>Nome completo</span><input type="text" name="nome" value="${h(p.nome || '')}" required></label>
+    <form id="ep" class="stack">
+    <div class="row" style="gap:14px;align-items:center;flex-wrap:nowrap"><div id="ep-foto">${fotoFicha(novo ? null : S.rostos[p.id])}</div>
+      <div class="stack" style="gap:6px;flex:1"><div class="label">Foto do rosto (para entrar no app)</div>
+      <label class="btn sm" style="cursor:pointer;width:fit-content">${!novo && S.rostos[p.id] ? 'Trocar foto' : 'Anexar foto'}<input type="file" id="ep-arq" accept="image/*" hidden></label>
+      <div class="muted" style="font-size:12px" id="ep-fmsg">Foto de frente, rosto inteiro, boa luz, sem óculos escuros ou boné.</div></div></div>
+    <label class="field"><span>Nome completo</span><input type="text" name="nome" value="${h(p.nome || '')}" required></label>
     <div class="grid2" style="gap:10px"><label class="field"><span>Login do app</span><input type="text" name="usuario" autocapitalize="none" autocomplete="off" value="${h(a ? a.usuario : '')}" placeholder="${h(sugereUsuario(p.nome || '', p.id))}"></label>
     <label class="field"><span>Senha do app (4 números)</span><input type="text" name="codigo" inputmode="numeric" maxlength="4" autocomplete="off" value="${h(a ? a.codigo : '')}" placeholder="ex.: ${codigoNovo()}"></label></div>
     <div class="muted" style="font-size:12.5px;margin-top:-6px">${a ? 'Ao mudar o login ou a senha, o promotor passa a entrar com os novos na hora. Quem estiver com o app aberto precisará entrar de novo.' : 'Deixe em branco para criar o acesso depois. O login usa só letras minúsculas e números, sem espaço nem acento.'}</div>
     <label class="field"><span>Base (cidade)</span><input type="text" name="base" value="${h(p.base || '')}"></label>
     <label class="field"><span>Telefone</span><input type="tel" name="telefone" value="${h(p.telefone || '')}"></label>
     <label class="field"><span>E-mail</span><input type="email" name="email" value="${h(p.email || '')}"></label>
-    <label class="row" style="gap:8px"><input type="checkbox" name="ativo" ${p.ativo !== false ? 'checked' : ''}> Ativo</label>
+    <label class="field"><span>Situação</span><select name="ativo"><option value="1" ${p.ativo !== false ? 'selected' : ''}>Ativo</option><option value="" ${p.ativo === false ? 'selected' : ''}>Inativo (não aparece nas rotas e não entra no app)</option></select></label>
     <div id="ep-msg"></div>
     <div class="row end"><button class="btn primary" type="submit" id="ep-s">Salvar</button></div></form>`);
   $('#ep-x').onclick = fechaModal;
+  let novaFoto = null;
+  $('#ep-arq').onchange = async ev => {
+    const f = ev.target.files[0]; if (!f) return; const fm = $('#ep-fmsg');
+    fm.textContent = 'Lendo o rosto da foto… (na primeira vez demora alguns segundos)';
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(f); });
+      const r = await leRosto(img, 608);
+      if (!r) { novaFoto = null; fm.innerHTML = '<span style="color:var(--crit)">Não encontrei um rosto nessa foto. Use uma foto de frente, mais de perto.</span>'; return; }
+      novaFoto = { foto: recorteRosto(img, r.box), desc: r.desc };
+      $('#ep-foto').innerHTML = fotoFicha(novaFoto); fm.innerHTML = '<span style="color:var(--ok)">Rosto encontrado. Clique em Salvar para gravar.</span>';
+    } catch (err) { fm.textContent = 'Não consegui ler a foto: ' + (err.message || err); }
+  };
   $('#ep').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
     const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), atualizado: Date.now() };
@@ -501,11 +563,13 @@ function editaPromotor(p) {
     const b = $('#ep-s'); b.disabled = true; b.textContent = 'Salvando…';
     try {
       await setDoc(doc(db, 'promotores', id), v, { merge: true });
+      if (novaFoto) await setDoc(doc(db, 'rostos', id), { foto: novaFoto.foto, desc: novaFoto.desc, atualizado: Date.now() });
       if (mexeuAcesso) await salvaAcesso(id, a, usuario, codigo);
       fechaModal(); toast(mexeuAcesso ? `Salvo. ${v.nome.split(' ')[0]} entra com login ${usuario} e senha ${codigo}.` : 'Promotor salvo', 6000);
     } catch (err) { b.disabled = false; b.textContent = 'Salvar'; msg(erroAcesso(err)); }
   };
 }
+const fotoFicha = r => r && r.foto ? `<img src="${r.foto}" alt="Foto do rosto" style="width:84px;height:84px;border-radius:50%;object-fit:cover">` : '<div class="av" style="width:84px;height:84px;background:var(--sunk);color:var(--muted);font-size:12px">sem foto</div>';
 function erroAcesso(e) {
   const c = (e && e.code) || '';
   if (c.includes('email-already-in-use')) return 'Esse login já existe no sistema de acesso (pode ser de um cadastro antigo). Escolha outro login.';

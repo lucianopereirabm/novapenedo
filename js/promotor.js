@@ -5,14 +5,15 @@ import {
   emailPromotor, senhaPromotor, $, h, semAcento, DIAS_LONGO, ymd, diaSemana, hm, dur, lsGet, lsSet,
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
+import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
 
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const MOTIVOS = ['Loja fechada', 'Sem acesso / recebimento', 'Falta de tempo', 'Outro'];
 const TIPOS = [['chegada', 'Chegada'], ['antes', 'Gôndola antes'], ['depois', 'Gôndola depois'], ['extra', 'Foto extra']];
 
-const S = { uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
-const show = id => ['carregando', 'v-login', 'v-semacesso', 'v-rota'].forEach(x => $('#' + x).hidden = x !== id);
+const S = { rosto: null, uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
+const show = id => ['carregando', 'v-login', 'v-semacesso', 'v-rota', 'v-rosto'].forEach(x => $('#' + x).hidden = x !== id);
 
 /* ---------- login ---------- */
 const pins = [0, 1, 2, 3].map(i => $('#pin-' + i));
@@ -36,6 +37,7 @@ $('#sair').onclick = async () => { if (await confirma('Sair do aplicativo?', 'Sa
 
 onAuthStateChanged(auth, async user => {
   if (!user) { show('v-login'); $('#sair').hidden = true; $('#quem').textContent = ''; return; }
+  if (S.iniciado && user.uid === S.uid) return; // mesma pessoa entrando de novo (liberação pelo supervisor)
   S.uid = user.uid; $('#sair').hidden = false;
   if (user.uid === ADMIN_UID) { location.href = 'gestao.html'; return; }
   const guardado = lsGet('np.pid.' + user.uid);
@@ -54,7 +56,64 @@ onAuthStateChanged(auth, async user => {
   }
 });
 
-function iniciar() {
+/* ---------- portão do rosto: o app só abre com o rosto do promotor ---------- */
+async function iniciar() {
+  S.iniciado = true; show('carregando');
+  try { const pr = await getDoc(doc(db, 'promotores', S.pid)); if (pr.exists() && pr.data().ativo === false) { show('v-semacesso'); $('#v-semacesso').innerHTML = '<b>Cadastro inativo</b>Seu cadastro está inativo. Fale com o supervisor.'; return; } } catch (e) {}
+  let ref = null;
+  try { const r = await getDoc(doc(db, 'rostos', S.pid)); if (r.exists()) { ref = r.data(); lsSet('np.rosto.' + S.pid, JSON.stringify({ desc: ref.desc })); } }
+  catch (e) { try { ref = JSON.parse(lsGet('np.rosto.' + S.pid) || 'null'); } catch (e2) {} }
+  S.rosto = ref && Array.isArray(ref.desc) ? ref.desc : null;
+  let ok = false; try { const x = JSON.parse(sessionStorage.getItem('np.rok') || 'null'); ok = x && x.pid === S.pid && Date.now() - x.t < 12 * 3600e3; } catch (e) {}
+  if (!S.rosto || ok) return abreApp();
+  portaoRosto();
+}
+function portaoRosto() {
+  show('v-rosto');
+  getDoc(doc(db, 'promotores', S.pid)).then(s => { if (s.exists()) { const w = s.data().nome.split(' ').filter(x => x && !['da', 'de', 'do', 'das', 'dos', 'e'].includes(x.toLowerCase())); $('#ro-nome').textContent = w.length > 1 ? w[0] + ' ' + w[w.length - 1] : w[0]; } }).catch(() => {});
+  carregaRosto().catch(() => {}); // já vai baixando o reconhecimento
+  const st = t => $('#ro-st').innerHTML = t;
+  const caixa = $('.rosto-cam'); const v = $('#ro-v');
+  let stream = null, rodando = false;
+  const para = () => { rodando = false; if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; v.srcObject = null; };
+  const libera = () => { para(); try { sessionStorage.setItem('np.rok', JSON.stringify({ pid: S.pid, t: Date.now() })); } catch (e) {} abreApp(); };
+  $('#ro-ok').onclick = async () => {
+    if (rodando) return;
+    const b = $('#ro-ok'); b.disabled = true; caixa.classList.remove('ok', 'no');
+    try {
+      st('Abrindo a câmera…');
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 } }, audio: false });
+      v.srcObject = stream; await v.play().catch(() => {});
+      st('Preparando o reconhecimento… (na primeira vez demora um pouco)');
+      await carregaRosto();
+    } catch (e) { para(); b.disabled = false; st('Não consegui abrir a câmera. Permita o uso da câmera para este app e tente de novo.'); return; }
+    rodando = true; let acertos = 0; const ini = Date.now();
+    st('Olhe para a câmera, com o rosto dentro do círculo…');
+    while (rodando) {
+      if (Date.now() - ini > 25000) { para(); b.disabled = false; caixa.classList.add('no'); st('<b>Não reconheci.</b> Procure um lugar com mais luz, tire boné ou óculos escuros e tente de novo.'); return; }
+      let r = null; try { if (v.videoWidth) r = await leRosto(v, 320); } catch (e) {}
+      const d = r ? distRosto(r.desc, S.rosto) : null;
+      if (d != null && d <= LIMITE) { acertos++; caixa.classList.add('ok'); caixa.classList.remove('no'); if (acertos >= 2) { st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); setTimeout(libera, 500); return; } }
+      else { acertos = 0; caixa.classList.remove('ok'); if (d != null) { caixa.classList.add('no'); st('Rosto não confere com o cadastro. Fique de frente para a câmera.'); } else { caixa.classList.remove('no'); st('Procurando rosto… olhe para a câmera.'); } }
+      await new Promise(res => setTimeout(res, 250));
+    }
+  };
+  $('#ro-sup').onclick = () => {
+    abreModal(`<h3>Liberar com a senha do supervisor</h3><p class="muted" style="font-size:14px">O supervisor digita o login e a senha deste promotor.</p>
+      <label class="field"><span>Login</span><input type="text" id="sp-u" autocapitalize="none" autocomplete="off"></label>
+      <label class="field"><span>Senha (4 números)</span><input type="password" id="sp-c" inputmode="numeric" maxlength="4" autocomplete="off"></label>
+      <div id="sp-m" class="muted" style="font-size:13px;min-height:18px"></div>
+      <div class="row end"><button class="btn" id="sp-x">Cancelar</button><button class="btn primary" id="sp-s">Liberar</button></div>`);
+    $('#sp-x').onclick = fechaModal;
+    $('#sp-s').onclick = async () => {
+      const u = semAcento($('#sp-u').value.trim()).replace(/[^a-z0-9]/g, ''), c = $('#sp-c').value.trim();
+      $('#sp-m').textContent = 'Conferindo…';
+      try { const cr = await signInWithEmailAndPassword(auth, emailPromotor(u), senhaPromotor(c)); if (cr.user.uid !== S.uid) { location.reload(); return; } fechaModal(); libera(); }
+      catch (e) { $('#sp-m').textContent = erroMsg(e); }
+    };
+  };
+}
+function abreApp() {
   show('v-rota');
   S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' }; $('#quem').innerHTML = `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`; render(); }));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
@@ -193,12 +252,27 @@ async function checkin() {
       $('#lg-ok').onclick = fechaModal; return;
     }
   }
-  b.firstChild.textContent = 'Abrindo a câmera…';
-  const cv = await tiraFoto({ frontal: true, titulo: 'Selfie na frente da loja' });
+  let cv = null, rosto = null;
+  while (true) {
+    b.firstChild.textContent = 'Abrindo a câmera…';
+    cv = await tiraFoto({ frontal: true, titulo: 'Selfie na frente da loja' });
+    if (!cv) { b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
+    if (!S.rosto) break;
+    b.firstChild.textContent = 'Conferindo o rosto…';
+    let r = null; try { r = await leRosto(cv); } catch (e) {}
+    const d = r ? distRosto(r.desc, S.rosto) : null;
+    rosto = { rostoDist: d, rostoOk: d != null && d <= LIMITE };
+    if (rosto.rostoOk) break;
+    const esc = await new Promise(res => {
+      abreModal(`<h3>${d == null ? 'Não encontrei seu rosto na selfie' : 'O rosto não confere com o cadastro'}</h3><p class="muted" style="font-size:14px">Tire a selfie de novo, de frente e com boa luz. Se registrar assim mesmo, a visita vai para a gestão com alerta.</p>
+        <div class="row end"><button class="btn" id="rf-f">Registrar assim mesmo</button><button class="btn primary" id="rf-t">Tirar de novo</button></div>`);
+      $('#rf-t').onclick = () => { fechaModal(); res('t'); }; $('#rf-f').onclick = () => { fechaModal(); res('f'); };
+    });
+    if (esc === 'f') break;
+  }
   b.disabled = false; b.firstChild.textContent = 'Fazer check-in';
-  if (!cv) return;
   const foto = { d: await comprime(cv), ts: Date.now(), tipo: 'chegada', gps };
-  const visita = novaVisita({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, semCoord: V.loja.lat == null, fotos: 1 });
+  const visita = novaVisita(Object.assign({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, semCoord: V.loja.lat == null, fotos: 1 }, rosto || {}));
   S.vis[V.id] = visita; S.fotos = [foto]; renderVisita();
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);

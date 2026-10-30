@@ -30,6 +30,8 @@ service cloud.firestore {
     match /vendas/{id}     { allow read, write: if isAdmin(); }
     match /acessos/{id}    { allow read, write: if isAdmin(); }
     match /variavel/{id}   { allow read, write: if isAdmin(); }
+    // Foto e traços do rosto (dado sensível): só o administrador e o próprio promotor
+    match /rostos/{pid}    { allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid); allow write: if isAdmin(); }
 
     // Visitas do dia: promotor só cria/altera as próprias
     match /dias/{dia}/visitas/{vid} {
