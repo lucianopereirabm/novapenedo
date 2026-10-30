@@ -40,6 +40,7 @@
   <button class="side-item" data-go="var"><span class="ic">$</span>Variável promotor</button>
   <button class="side-item" data-go="equipe"><span class="ic">☺</span>Equipe e acessos</button>
   <button class="side-item" data-go="config"><span class="ic">⚙</span>Configurações</button>
+  <div class="muted" id="versao-g" style="font-size:11px;padding:12px 10px 0;margin-top:auto"></div>
 </nav>
 <main id="main">
   <section id="v-painel" class="stack" hidden></section>
@@ -51,5 +52,13 @@
 </main>
 </div>
 <script type="module" src="js/gestao.js"></script>
+<script>
+// mantém a Gestão sempre na versão mais nova (troca e recarrega sozinha uma vez quando sai atualização)
+if ('serviceWorker' in navigator) {
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!recarregou) { recarregou = true; location.reload(); } });
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}));
+}
+</script>
 </body>
 </html>

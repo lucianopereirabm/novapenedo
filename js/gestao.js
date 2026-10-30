@@ -9,6 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
+const VERSAO_GESTAO = '2026-10-30.7';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -33,7 +34,7 @@ onAuthStateChanged(auth, async user => {
   if (!admin) { try { admin = (await getDoc(doc(db, 'admins', user.uid))).exists(); } catch (e) {} }
   if (!admin) { $('#v-negado').hidden = false; return; }
   $('#quem').innerHTML = `Gestão<b>${h(user.email || '')}</b>`;
-  $('#shell').hidden = false; iniciar();
+  $('#shell').hidden = false; $('#versao-g').textContent = 'Versão ' + VERSAO_GESTAO; iniciar();
 });
 
 function iniciar() {
