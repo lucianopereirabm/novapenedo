@@ -47,6 +47,13 @@ function iniciar() {
   document.querySelectorAll('.side-item').forEach(b => b.onclick = () => { S.tab = b.dataset.go; lsSet('np.g.tab', S.tab); mostra(); window.scrollTo(0, 0); });
   if (!secoes.includes(S.tab)) S.tab = 'painel';
   mostra(); assinaPainel(); assinaVar();
+  // a cada minuto: atualiza horários na tela e, se estiver vendo "hoje", vira o dia sozinho à meia-noite
+  let hojeAntes = ymd(new Date());
+  setInterval(() => {
+    const hoje = ymd(new Date());
+    if (hoje !== hojeAntes) { if (P.data === hojeAntes) { P.data = hoje; const i = $('#p-data'); if (i) i.value = hoje; assinaPainel(); } hojeAntes = hoje; }
+    if (S.tab === 'painel') renderPainel();
+  }, 60000);
 }
 function mostra() {
   secoes.forEach(x => $('#v-' + x).hidden = x !== S.tab);
