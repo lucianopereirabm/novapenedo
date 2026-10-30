@@ -221,3 +221,17 @@ tr.click:hover td{background:var(--sunk)}
 .tcard .ultimo{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-4px}
 .ic-ev{display:inline-flex;width:16px;height:16px;border-radius:50%;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;margin-right:4px;vertical-align:-2px}
 .ic-ev.ok{background:#27AE60}.ic-ev.live{background:#F2994A}.ic-ev.no{background:#EB5757}
+
+.jor{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px}
+.jor b{font-size:16px}
+.jor.on{border-color:var(--brand-y);background:var(--warn-soft)}
+.jor.fim{background:var(--ok-soft)}
+
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:none;padding:8px 14px;font-weight:600;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--brand-y);color:var(--brand-n)}
+#p-ctl-dia[hidden],#p-ctl-mes[hidden]{display:none}
+table.mes td,table.mes th{white-space:nowrap}
+.cargas{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.cargas input{text-align:center;padding:9px 4px}
+@media (max-width:520px){.cargas{grid-template-columns:repeat(4,1fr)}}
+table.num td{white-space:nowrap}table.num td:nth-child(2) b+div,table.num td .tag{white-space:nowrap}

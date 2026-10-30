@@ -7,6 +7,7 @@ import {
 } from './fb.js';
 import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
+import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
@@ -83,10 +84,11 @@ const vazioCarregando = () => !(S.pronto.p && S.pronto.l);
 /* =========================================================
    MONITORAMENTO
    ========================================================= */
-const P = { data: ymd(new Date()), vis: {}, unsub: null, mapa: null, camada: null, sel: '' };
+const P = { modo: lsGet('np.p.modo') === 'mes' ? 'mes' : 'dia', mes: ymd(new Date()).slice(0, 7), dadosMes: {}, selMes: '', data: ymd(new Date()), vis: {}, unsub: null, mapa: null, camada: null, sel: '' };
 function assinaPainel() {
-  if (P.unsub) P.unsub();
-  P.vis = {};
+  if (P.unsub) P.unsub(); if (P.unsubJ) P.unsubJ();
+  P.vis = {}; P.jor = {};
+  P.unsubJ = onSnapshot(collection(db, 'dias', P.data, 'jornadas'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); P.jor = m; if (S.tab === 'painel') renderPainel(); }, () => {});
   P.unsub = onSnapshot(collection(db, 'dias', P.data, 'visitas'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); P.vis = m; if (S.tab === 'painel') renderPainel(); }, e => toast(erroMsg(e)));
 }
 // Resumo do dia de um promotor: paradas na ordem da rota + visitas fora da rota
@@ -104,7 +106,8 @@ function diaDoPromotor(pid) {
   const tempo = vs.reduce((a, x) => a + (x.v.checkin && x.v.checkout ? x.v.checkout - x.v.checkin : 0), 0);
   const alertas = vs.filter(x => x.v.rostoOk === false || (x.v.distIn != null && x.v.distIn > S.raio)).length;
   const ultima = vs.filter(x => x.v.checkout).sort((a, b) => b.v.checkout - a.v.checkout)[0];
-  return { pid, paradas, programadas: lojas.length, feitas, extras, nao, agora, primeira: ents.length ? Math.min(...ents) : null, ultimaSaida: sais.length ? Math.max(...sais) : null, ultima, tempo, alertas };
+  const J = calcJornada({ j: (P.jor || {})[pid], vs: vs.map(x => x.v), date: P.data, regras: regrasJornada(S.empresa), hoje: ymd(new Date()) });
+  return { J, pid, paradas, programadas: lojas.length, feitas, extras, nao, agora, primeira: ents.length ? Math.min(...ents) : null, ultimaSaida: sais.length ? Math.max(...sais) : null, ultima, tempo, alertas };
 }
 const nomeCurto = id => { const w = promNome(id).split(' ').filter(x => x && !['da', 'de', 'do', 'das', 'dos', 'e'].includes(x.toLowerCase())); return w.length > 1 ? w[0] + ' ' + w[w.length - 1] : w[0] || ''; };
 const iniciais = n => String(n || '?').split(' ').filter(Boolean).slice(0, 2).map(x => x[0]).join('').toUpperCase();
@@ -124,18 +127,29 @@ function renderPainel() {
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
     c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div><h2 style="margin:0">Torre de controle</h2><div class="muted" id="p-sub" style="font-size:13px"></div></div>
-      <div class="row"><button class="btn sm" id="p-ant" aria-label="Dia anterior">‹</button><input type="date" id="p-data" style="width:auto"><button class="btn sm" id="p-prox" aria-label="Próximo dia">›</button><button class="btn sm" id="p-hoje">Hoje</button></div></div>
+      <div class="row"><div class="seg" id="p-modo"><button data-m="dia">Dia</button><button data-m="mes">Mês</button></div>
+      <span class="row" id="p-ctl-dia"><button class="btn sm" id="p-ant" aria-label="Dia anterior">‹</button><input type="date" id="p-data" style="width:auto"><button class="btn sm" id="p-prox" aria-label="Próximo dia">›</button><button class="btn sm" id="p-hoje">Hoje</button></span>
+      <span class="row" id="p-ctl-mes"><button class="btn sm" id="m-ant" aria-label="Mês anterior">‹</button><input type="month" id="p-mes" style="width:auto"><button class="btn sm" id="m-prox" aria-label="Próximo mês">›</button><button class="btn sm" id="m-atu">Atualizar</button></span></div></div>
       <div id="p-kpis"></div><div id="p-corpo"></div>`;
+    $('#p-mes').value = P.mes;
+    const mudaMes = m => { P.mes = m; $('#p-mes').value = m; P.selMes = ''; renderPainel(); };
+    $('#p-mes').onchange = e => { if (e.target.value) mudaMes(e.target.value); };
+    const somaMes = n => { const [y, mm] = P.mes.split('-').map(Number); const d = new Date(y, mm - 1 + n, 1); mudaMes(ymd(d).slice(0, 7)); };
+    $('#m-ant').onclick = () => somaMes(-1); $('#m-prox').onclick = () => somaMes(1); $('#m-atu').onclick = () => { delete P.dadosMes[P.mes]; renderPainel(); };
+    $('#p-modo').querySelectorAll('button').forEach(b => b.onclick = () => { P.modo = b.dataset.m; lsSet('np.p.modo', P.modo); $('#p-corpo').dataset.modo = ''; tiraMapa(); renderPainel(); });
     $('#p-data').value = P.data;
     const muda = dt => { P.data = dt; $('#p-data').value = dt; assinaPainel(); renderPainel(); };
     $('#p-data').onchange = e => { if (e.target.value) muda(e.target.value); };
     const soma = n => { const d = new Date(P.data + 'T12:00:00'); d.setDate(d.getDate() + n); muda(ymd(d)); };
     $('#p-ant').onclick = () => soma(-1); $('#p-prox').onclick = () => soma(1); $('#p-hoje').onclick = () => muda(ymd(new Date()));
   }
+  $('#p-modo').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.m === P.modo)));
+  $('#p-ctl-dia').hidden = P.modo !== 'dia'; $('#p-ctl-mes').hidden = P.modo !== 'mes';
   if (vazioCarregando()) { $('#p-corpo').innerHTML = '<div class="empty">Carregando…</div>'; return; }
+  if (P.modo === 'mes') return renderMes();
   $('#p-sub').textContent = `${DIAS_LONGO[diaSemana(P.data)].replace(/^./, x => x.toUpperCase())}, ${dataBR(P.data)}${P.data === ymd(new Date()) ? ' · ao vivo' : ''}`;
-  const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id)); Object.values(P.vis).forEach(v => ids.add(v.promotorId));
-  const dias = [...ids].map(diaDoPromotor).filter(d => d.programadas || d.paradas.length)
+  const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id)); Object.values(P.vis).forEach(v => ids.add(v.promotorId)); Object.keys(P.jor || {}).forEach(k => ids.add(k));
+  const dias = [...ids].map(diaDoPromotor).filter(d => d.programadas || d.paradas.length || d.J.tem)
     .sort((a, b) => promNome(a.pid).localeCompare(promNome(b.pid)));
   const T = dias.reduce((t, d) => ({ prog: t.prog + d.programadas, feitas: t.feitas + d.feitas, live: t.live + (d.agora ? 1 : 0), nao: t.nao + d.nao, al: t.al + d.alertas, extras: t.extras + d.extras }), { prog: 0, feitas: 0, live: 0, nao: 0, al: 0, extras: 0 });
   $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas</span></div><div class="kpi"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas</span></div><div class="kpi"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas (rosto ou GPS)</span></div></div>`;
@@ -157,7 +171,7 @@ function renderPainel() {
         <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
       ${estrada(d)}
       <div class="ultimo">${ultimoEvento(d)}</div>
-      <div class="spread muted num" style="font-size:12px"><span>${d.primeira ? 'Início ' + hm(d.primeira) : '—'}${d.ultimaSaida ? ' · última saída ' + hm(d.ultimaSaida) : ''}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
+      <div class="spread muted num" style="font-size:12px"><span>${jornadaTxt(d.J)}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
   }).join('');
   $('#p-cards').querySelectorAll('[data-p]').forEach(b => b.onclick = () => abreDetalhe(b.dataset.p));
   const rt = $('#p-rotas'); rt.checked = lsGet('np.p.rotas') !== '0'; rt.onchange = () => { lsSet('np.p.rotas', rt.checked ? '1' : '0'); renderPainel(); };
@@ -179,6 +193,100 @@ function ultimoEvento(d) {
       if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
   if (!ev.length) return '<span class="muted">Aguardando o primeiro check-in</span>';
   return ev.sort((a, b) => b.t - a.t)[0].html;
+}
+function jornadaTxt(J) {
+  if (!J.tem) return 'Jornada não iniciada';
+  const ini = hm(J.inicio) + (J.inicioEst ? '*' : '');
+  if (J.andamento) return `Jornada desde ${ini} · <b style="color:var(--ink)">${hmin(J.trabalhado)}</b>`;
+  return `Jornada ${ini}–${hm(J.fim)}${J.fimEst ? '*' : ''} · <b style="color:var(--ink)">${hmin(J.trabalhado)}</b> <span style="color:${J.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">(${saldoTxt(J.saldo)})</span>`;
+}
+/* ---------- visão do mês: visitas e banco de horas ---------- */
+const inicioControle = () => S.empresa.inicioControle || '2026-10-30'; // antes disso não havia app: não conta falta
+function diasDoMes(mes) { const [y, m] = mes.split('-').map(Number); const n = new Date(y, m, 0).getDate(); const hoje = ymd(new Date()); const ini = inicioControle(); return Array.from({ length: n }, (_, i) => `${mes}-${String(i + 1).padStart(2, '0')}`).filter(d => d <= hoje && d >= ini); }
+async function carregaMes(mes) {
+  if (P.dadosMes[mes] && P.dadosMes[mes].ok) return P.dadosMes[mes];
+  if (P.dadosMes[mes] && P.dadosMes[mes].carregando) return null;
+  const D = P.dadosMes[mes] = { carregando: true, vis: {}, jor: {} };
+  const ds = diasDoMes(mes);
+  await Promise.all(ds.map(async d => {
+    const [v, j] = await Promise.all([getDocs(collection(db, 'dias', d, 'visitas')).catch(() => null), getDocs(collection(db, 'dias', d, 'jornadas')).catch(() => null)]);
+    D.vis[d] = {}; if (v) v.docs.forEach(x => D.vis[d][x.id] = x.data());
+    D.jor[d] = {}; if (j) j.docs.forEach(x => D.jor[d][x.id] = x.data());
+  }));
+  D.carregando = false; D.ok = true; D.em = Date.now(); return D;
+}
+function resumoMes(D, mes) {
+  const hoje = ymd(new Date()); const regras = regrasJornada(S.empresa);
+  const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id));
+  Object.values(D.vis).forEach(m => Object.values(m).forEach(v => ids.add(v.promotorId)));
+  return [...ids].map(pid => {
+    const R = { pid, dias: [], trab: 0, prev: 0, saldo: 0, diasTrab: 0, faltas: 0, prog: 0, feitas: 0, nao: 0, semVisita: 0, fora: 0, alertas: 0, andamento: null };
+    diasDoMes(mes).forEach(d => {
+      const lojas = lojasDoDia(pid, d); const m = D.vis[d] || {};
+      const vs = Object.entries(m).filter(([, v]) => v.promotorId === pid);
+      const naRota = new Set(lojas.map(l => l.id + '_' + pid));
+      const feitas = vs.filter(([k, v]) => naRota.has(k) && v.status === 'concluida').length;
+      const nao = vs.filter(([, v]) => v.status === 'nao_visitada').length;
+      const fora = vs.filter(([k, v]) => !naRota.has(k) && v.status !== 'nao_visitada').length;
+      const sem = d < hoje ? lojas.filter(l => !m[l.id + '_' + pid]) : [];
+      const al = vs.filter(([, v]) => v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)).length;
+      const J = calcJornada({ j: (D.jor[d] || {})[pid], vs: vs.map(([, v]) => v), date: d, regras, hoje });
+      const falta = !J.tem && d < hoje && lojas.length > 0 && J.esperado > 0;
+      if (!lojas.length && !vs.length && !J.tem) return;
+      R.dias.push({ d, lojas: lojas.length, feitas, nao, fora, sem, al, J, falta });
+      R.prog += lojas.length; R.feitas += feitas; R.nao += nao; R.fora += fora; R.semVisita += sem.length; R.alertas += al;
+      if (J.tem) { R.diasTrab++; if (J.andamento) R.andamento = J; else { R.trab += J.trabalhado; R.prev += J.esperado; R.saldo += J.saldo; } }
+      if (falta) R.faltas++;
+    });
+    return R;
+  }).filter(R => R.dias.length).sort((a, b) => promNome(a.pid).localeCompare(promNome(b.pid)));
+}
+async function renderMes() {
+  const box = $('#p-corpo'); box.dataset.modo = 'mes'; tiraMapa();
+  const [y, m] = P.mes.split('-').map(Number); const nomeMes = new Date(y, m - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  $('#p-sub').textContent = nomeMes.replace(/^./, x => x.toUpperCase()) + ' · dias até hoje' + (P.mes === inicioControle().slice(0, 7) ? ' · controle pelo app desde ' + dataBR(inicioControle()) : '');
+  let D = P.dadosMes[P.mes];
+  if (!D || !D.ok) {
+    $('#p-kpis').innerHTML = ''; box.innerHTML = '<div class="empty">Carregando o mês… (lê dia por dia)</div>';
+    D = await carregaMes(P.mes); if (!D || P.modo !== 'mes') return;
+  }
+  const RS = resumoMes(D, P.mes);
+  if (!diasDoMes(P.mes).length) { $('#p-kpis').innerHTML = ''; box.innerHTML = `<div class="empty"><b>Sem dias controlados neste mês</b>O controle pelo app começou em ${dataBR(inicioControle())}.</div>`; return; }
+  const T = RS.reduce((t, r) => ({ prog: t.prog + r.prog, feitas: t.feitas + r.feitas, nao: t.nao + r.nao, sem: t.sem + r.semVisita, saldo: t.saldo + r.saldo, faltas: t.faltas + r.faltas, al: t.al + r.alertas }), { prog: 0, feitas: 0, nao: 0, sem: 0, saldo: 0, faltas: 0, al: 0 });
+  $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas (${T.prog ? Math.round(T.feitas / T.prog * 100) : 0}%)</span></div><div class="kpi"><b style="color:var(--crit)">${T.sem + T.nao}</b><span>Lojas sem visita (${T.nao} com motivo)</span></div><div class="kpi"><b style="color:${T.faltas ? 'var(--crit)' : 'inherit'}">${T.faltas}</b><span>Dias com rota sem jornada</span></div><div class="kpi"><b style="color:${T.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(T.saldo)}</b><span>Banco de horas da equipe</span></div></div>`;
+  if (P.selMes && RS.some(r => r.pid === P.selMes)) return renderMesPromotor(RS.find(r => r.pid === P.selMes), nomeMes);
+  box.innerHTML = `<div class="card" style="padding:0"><div class="table-wrap"><table class="num mes"><thead><tr><th>Promotor</th><th class="r">Dias trab.</th><th class="r">Faltas</th><th class="r">Horas trab.</th><th class="r">Previstas</th><th class="r">Banco de horas</th><th class="r">Visitas</th><th class="r">Não visitadas</th><th class="r">Sem registro</th><th class="r">Fora da rota</th><th class="r">Alertas</th></tr></thead><tbody>
+    ${RS.map(r => `<tr class="click" data-pm="${h(r.pid)}"><td><div class="row" style="gap:8px;flex-wrap:nowrap">${avatar(r.pid, 30)}<b>${h(nomeCurto(r.pid))}</b></div></td><td class="r">${r.diasTrab}</td><td class="r" style="color:${r.faltas ? 'var(--crit)' : 'inherit'}">${r.faltas || '—'}</td><td class="r">${hmin(r.trab)}</td><td class="r">${hmin(r.prev)}</td>
+      <td class="r"><b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b>${r.andamento ? `<div class="muted" style="font-size:11px">+ hoje ${hmin(r.andamento.trabalhado)} em andamento</div>` : ''}</td>
+      <td class="r">${r.feitas}/${r.prog} <span class="muted">${r.prog ? Math.round(r.feitas / r.prog * 100) : 0}%</span></td><td class="r">${r.nao || '—'}</td><td class="r" style="color:${r.semVisita ? 'var(--crit)' : 'inherit'}">${r.semVisita || '—'}</td><td class="r">${r.fora || '—'}</td><td class="r" style="color:${r.alertas ? 'var(--crit)' : 'inherit'}">${r.alertas || '—'}</td></tr>`).join('')}
+    </tbody></table></div></div>
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos 1h de almoço nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). O dia de hoje entra quando a jornada for encerrada. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
+    <button class="btn sm" id="m-csv">Baixar planilha do mês</button></div>`;
+  box.querySelectorAll('[data-pm]').forEach(tr => tr.onclick = () => { P.selMes = tr.dataset.pm; renderPainel(); });
+  $('#m-csv').onclick = () => csvMes(RS, nomeMes);
+}
+function renderMesPromotor(r, nomeMes) {
+  const box = $('#p-corpo');
+  box.innerHTML = `<div class="stack"><div class="row" style="gap:12px;flex-wrap:wrap"><button class="btn sm" id="pm-volta">‹ Todos</button>${avatar(r.pid, 48)}<div><h3 style="margin:0;font-size:20px">${h(promNome(r.pid))}</h3>
+      <div class="muted num" style="font-size:13px">${nomeMes} · ${r.diasTrab} dias trabalhados · ${hmin(r.trab)} trabalhadas de ${hmin(r.prev)} previstas · banco de horas <b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b> · visitas ${r.feitas}/${r.prog}${r.faltas ? ` · <span style="color:var(--crit)">${r.faltas} falta(s)</span>` : ''}</div></div></div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Data</th><th>Jornada</th><th class="r">Trabalhado</th><th class="r">Previsto</th><th class="r">Saldo</th><th class="r">Visitas</th><th>Sem visita</th><th class="r">Alertas</th></tr></thead><tbody>
+    ${r.dias.map(x => { const J = x.J; return `<tr class="click" data-dd="${x.d}"><td><b>${x.d.slice(8)}/${x.d.slice(5, 7)}</b> <span class="muted">${DIAS[J.wd]}</span></td>
+      <td>${x.falta ? '<span class="tag no">sem jornada</span>' : J.tem ? `${hm(J.inicio)}${J.inicioEst ? '*' : ''}–${J.andamento ? 'agora' : hm(J.fim) + (J.fimEst ? '*' : '')}` : '—'}</td>
+      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento ? saldoTxt(J.saldo) : J.andamento ? 'em andamento' : '—'}</td>
+      <td class="r">${x.feitas}/${x.lojas}${x.fora ? ` <span class="muted">+${x.fora}</span>` : ''}</td>
+      <td style="font-size:12.5px">${x.nao ? `<span class="tag">${x.nao} com motivo</span> ` : ''}${x.sem.length ? `<span style="color:var(--crit)">${x.sem.map(l => h(l.nome)).join(', ')}</span>` : (x.nao ? '' : '—')}</td>
+      <td class="r" style="color:${x.al ? 'var(--crit)' : 'inherit'}">${x.al || '—'}</td></tr>`; }).join('')}
+    </tbody></table></div></div>
+    <div class="muted" style="font-size:12px">* horário estimado pelo primeiro check-in ou último check-out (o promotor não tocou no botão de jornada). Clique num dia para abrir a Torre naquele dia.</div></div>`;
+  $('#pm-volta').onclick = () => { P.selMes = ''; renderPainel(); };
+  box.querySelectorAll('[data-dd]').forEach(tr => tr.onclick = () => { P.modo = 'dia'; lsSet('np.p.modo', 'dia'); P.data = tr.dataset.dd; $('#p-data').value = P.data; P.sel = r.pid; box.dataset.modo = ''; assinaPainel(); renderPainel(); window.scrollTo(0, 0); });
+}
+function csvMes(RS, nomeMes) {
+  const L = [['Promotor', 'Data', 'Dia', 'Início', 'Fim', 'Trabalhado (h)', 'Previsto (h)', 'Saldo (h)', 'Visitas feitas', 'Programadas', 'Não visitadas', 'Sem registro', 'Fora da rota', 'Alertas', 'Observação']];
+  const hh = m => (m / 60).toFixed(2).replace('.', ',');
+  RS.forEach(r => r.dias.forEach(x => { const J = x.J; L.push([promNome(r.pid), x.d.split('-').reverse().join('/'), DIAS[J.wd], J.tem ? hm(J.inicio) : '', J.tem && !J.andamento ? hm(J.fim) : '', J.tem ? hh(J.trabalhado) : '', hh(J.esperado), J.tem && !J.andamento ? hh(J.saldo) : '', x.feitas, x.lojas, x.nao, x.sem.length, x.fora, x.al, (x.falta ? 'Sem jornada com rota. ' : '') + (J.inicioEst || J.fimEst ? 'Horário estimado pelos check-ins.' : '') + (J.andamento ? 'Em andamento.' : '')]); }));
+  const txt = '﻿' + L.map(l => l.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = `Jornada e visitas ${P.mes}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 const abreDetalhe = pid => { P.sel = pid; window.scrollTo(0, 0); renderPainel(); };
 function statusTexto(d) {
@@ -279,7 +387,7 @@ function renderDetalhe(d) {
       <div class="muted" style="font-size:12px">Mapa: números = ordem da rota do dia (verde concluída, laranja em loja, branco pendente, vermelho não visitada ou com alerta); tracejado = rota planejada; linha verde = caminho feito pelos check-ins (pontinhos). Lojas com ponto aproximado (pelo endereço) aparecem com borda tracejada. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
   }
   $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
-      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div></div></div>
+      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div><div class="muted num" style="font-size:13px;margin-top:2px">${jornadaTxt(d.J)}${d.J.tem && d.J.almoco ? ' · almoço de 1h descontado' : ''}${d.J.inicioEst || d.J.fimEst ? ' · * horário estimado pelos check-ins (não tocou no botão de jornada)' : ''}${(P.jor || {})[d.pid] && ((P.jor[d.pid].rostoInicio || {}).rostoOk === false || (P.jor[d.pid].rostoFim || {}).rostoOk === false) ? ' · <span style="color:var(--crit)">rosto ≠ na jornada</span>' : ''}</div></div></div>
       <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>`;
   $('#p-dest').innerHTML = estrada(d);
   $('#p-dtab').innerHTML = linhas;
@@ -770,6 +878,12 @@ function renderConfig() {
       <label class="field"><span>Faturamento mínimo da rota (R$)</span><input type="number" id="cf-meta" step="1000" value="${S.regras.meta}"></label>
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
       <div><button class="btn primary" id="cf-salvar">Salvar</button></div></div>
+    <div class="card stack"><h3>Jornada e banco de horas</h3><p class="muted" style="margin:0;font-size:14px">Carga prevista por dia (horas:minutos). O banco de horas compara com o trabalhado.</p>
+      <div class="cargas">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="field"><span>${DIAS[d]}</span><input type="text" data-cg="${d}" inputmode="numeric" value="${hmin(regrasJornada(S.empresa).carga[d]).replace('h', ':')}"></label>`).join('')}</div>
+      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço descontado (minutos)</span><input type="number" id="cf-alm" min="0" step="15" value="${regrasJornada(S.empresa).almocoMin}"></label>
+      <label class="field" style="flex:1"><span>Descontar quando a jornada passar de (horas)</span><input type="number" id="cf-almac" min="0" step="0.5" value="${regrasJornada(S.empresa).almocoAcima / 60}"></label></div>
+      <label class="field"><span>Início do controle pelo app (dias antes não contam falta)</span><input type="date" id="cf-ini" value="${h(S.empresa.inicioControle || '2026-10-30')}"></label>
+      <div><button class="btn primary" id="cf-jor-s">Salvar jornada</button></div></div>
     <div class="card stack"><h3>Dados da empresa nos termos</h3><p class="muted" style="margin:0;font-size:14px">Aparecem nos termos de LGPD e do aparelho que o promotor assina no primeiro acesso.</p>
       <label class="field"><span>Razão social</span><input type="text" id="cf-emp" value="${h(S.empresa.empresa || 'Nova Penedo Distribuidora')}"></label>
       <label class="field"><span>CNPJ</span><input type="text" id="cf-cnpj" value="${h(S.empresa.cnpj || '')}"></label>
@@ -783,6 +897,12 @@ function renderConfig() {
   $('#cf-salvar').onclick = async () => {
     try { await setDoc(doc(db, 'config', 'app'), { raio: +$('#cf-raio').value || 150 }, { merge: true }); await setDoc(doc(db, 'config', 'variavel'), { base: +$('#cf-base').value || 0, meta: +$('#cf-meta').value || 0, prop: $('#cf-prop').checked }); toast('Configurações salvas'); }
     catch (e) { toast(erroMsg(e)); }
+  };
+  $('#cf-jor-s').onclick = () => {
+    const carga = {}; let erro = false;
+    document.querySelectorAll('[data-cg]').forEach(i => { const m = i.value.trim().match(/^(\d{1,2})(?:[:h](\d{1,2}))?$/); if (!m) erro = true; else carga[i.dataset.cg] = +m[1] * 60 + (+m[2] || 0); });
+    if (erro) return toast('Use o formato 8:00 nas cargas.');
+    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60) } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
   };
   $('#cf-emp-s').onclick = () => setDoc(doc(db, 'config', 'app'), { empresa: $('#cf-emp').value.trim(), cnpj: $('#cf-cnpj').value.trim(), contato: $('#cf-cont').value.trim() }, { merge: true }).then(() => toast('Dados da empresa salvos'), e => toast(erroMsg(e)));
   $('#cf-arq').onchange = e => { const f = e.target.files[0]; if (f) importar(f); };

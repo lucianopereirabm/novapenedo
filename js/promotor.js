@@ -6,15 +6,16 @@ import {
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
 import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
+import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-10-30.4';
+export const VERSAO_APP = '2026-10-30.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const MOTIVOS = ['Loja fechada', 'Sem acesso / recebimento', 'Falta de tempo', 'Outro'];
 const TIPOS = [['chegada', 'Chegada'], ['antes', 'Gôndola antes'], ['depois', 'Gôndola depois'], ['extra', 'Foto extra']];
 
-const S = { rosto: null, uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
+const S = { jor: null, cfgApp: null, rosto: null, uid: null, pid: null, prom: null, lojas: [], todas: null, vis: {}, checklist: CHECK_PADRAO, raio: 150, hoje: ymd(new Date()), visita: null, fotos: [], unsub: [] };
 const show = id => ['carregando', 'v-login', 'v-semacesso', 'v-rota', 'v-rosto', 'v-termos'].forEach(x => $('#' + x).hidden = x !== id);
 
 /* ---------- login ---------- */
@@ -187,7 +188,9 @@ function abreApp() {
   show('v-rota');
   S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' }; $('#quem').innerHTML = `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`; render(); }));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
-  S.unsub.push(onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists() && +s.data().raio) S.raio = +s.data().raio; }, () => {}));
+  S.unsub.push(onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists()) S.cfgApp = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; render(); }, () => {}));
+  S.unsub.push(onSnapshot(doc(db, 'dias', S.hoje, 'jornadas', S.pid), s => { S.jor = s.exists() ? s.data() : null; render(); }, () => {}));
+  setInterval(() => { if (!$('#v-rota').hidden) render(); }, 60000);
   S.unsub.push(onSnapshot(query(collection(db, 'lojas'), where('promotorId', '==', S.pid)), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); }, e => toast(erroMsg(e))));
   S.unsub.push(onSnapshot(query(collection(db, 'dias', S.hoje, 'visitas'), where('promotorId', '==', S.pid)), { includeMetadataChanges: true }, s => {
     const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.vis = m;
@@ -235,7 +238,7 @@ function render() {
   const feitas = lojas.filter(l => { const v = S.vis[vid(l.id)]; return v && v.status !== 'em_loja'; }).length;
   const extras = Object.values(S.vis).filter(v => v.foraRota);
   let html = `<div><div class="label">Rota de ${DIAS_LONGO[wdHoje()]} · ${S.hoje.split('-').reverse().slice(0, 2).join('/')}</div><h2 class="num">${feitas} de ${lojas.length} lojas</h2></div>
-    <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>`;
+    <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}`;
   if (!lojas.length) html += `<div class="empty"><b>Sem lojas para hoje</b>Nenhuma loja está marcada para ${DIAS_LONGO[wdHoje()]} na sua rota.</div>`;
   else html += '<div class="stops">' + lojas.map((l, i) => {
     const v = S.vis[vid(l.id)]; const cls = v ? (v.status === 'em_loja' ? 'live' : v.status === 'concluida' ? 'done' : '') : '';
@@ -247,7 +250,53 @@ function render() {
   c.innerHTML = html;
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora));
   $('#b-fora').onclick = buscaFora;
+  const bj = $('#b-jor'); if (bj) bj.onclick = S.jor && S.jor.inicio && !S.jor.fim ? encerrarJornada : iniciarJornada;
 }
+/* ---------- jornada: início e fim do dia de trabalho ---------- */
+function cartaoJornada() {
+  const J = calcJornada({ j: S.jor, vs: Object.values(S.vis), date: S.hoje, regras: regrasJornada(S.cfgApp), hoje: S.hoje });
+  if (!S.jor || !S.jor.inicio) return `<div class="jor card"><div><div class="label">Jornada</div><b>Ainda não iniciada</b></div><button class="btn primary" id="b-jor">Iniciar jornada</button></div>`;
+  if (!S.jor.fim) return `<div class="jor card on"><div><div class="label">Jornada desde ${hm(S.jor.inicio)}</div><b class="num">${hmin(J.trabalhado)} trabalhadas</b>${J.almoco ? '<span class="muted" style="font-size:12px"> (almoço de 1h descontado)</span>' : ''}</div><button class="btn" id="b-jor">Encerrar jornada</button></div>`;
+  return `<div class="jor card fim"><div><div class="label">Jornada encerrada</div><b class="num">${hm(S.jor.inicio)}–${hm(S.jor.fim)} · ${hmin(J.trabalhado)}</b> <span class="muted num" style="font-size:12px">saldo do dia ${saldoTxt(J.saldo)}</span></div></div>`;
+}
+// selfie conferida com o cadastro, usada no início e no fim da jornada
+async function selfieConferida(titulo) {
+  while (true) {
+    const cv = await tiraFoto({ frontal: true, titulo }); if (!cv) return null;
+    if (!S.rosto) return { cv, rosto: {} };
+    let r = null; try { r = await leRosto(cv); } catch (e) {}
+    const d = r ? distRosto(r.desc, S.rosto) : null;
+    if (d != null && d <= LIMITE) return { cv, rosto: { rostoDist: d, rostoOk: true } };
+    const esc = await new Promise(res => {
+      abreModal(`<h3>${d == null ? 'Não encontrei seu rosto na selfie' : 'O rosto não confere com o cadastro'}</h3><p class="muted" style="font-size:14px">Tire de novo, de frente e com boa luz. Se registrar assim mesmo, vai para a gestão com alerta.</p>
+        <div class="row end"><button class="btn" id="rf-f">Registrar assim mesmo</button><button class="btn primary" id="rf-t">Tirar de novo</button></div>`);
+      $('#rf-t').onclick = () => { fechaModal(); res('t'); }; $('#rf-f').onclick = () => { fechaModal(); res('f'); };
+    });
+    if (esc === 'f') return { cv, rosto: { rostoDist: d, rostoOk: false } };
+  }
+}
+async function iniciarJornada() {
+  const b = $('#b-jor'); if (b) { b.disabled = true; b.textContent = 'Pegando o GPS…'; }
+  let gps = null; try { gps = await pegaGPS(30000); } catch (e) {}
+  const s = await selfieConferida('Selfie para iniciar a jornada');
+  if (!s) { render(); return; }
+  const t = Date.now();
+  const reg = { promotorId: S.pid, data: S.hoje, inicio: t, gpsInicio: gps, fotoInicio: await comprime(s.cv, 30000), rostoInicio: s.rosto, recebidoInicio: serverTimestamp(), uid: S.uid };
+  S.jor = reg; render();
+  grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), reg)); msgSalvo('Jornada iniciada às ' + hm(t));
+}
+async function encerrarJornada() {
+  if (Object.values(S.vis).some(v => v.status === 'em_loja')) return toast('Faça o check-out da loja antes de encerrar a jornada.', 5000);
+  const pend = lojasHoje().filter(l => !S.vis[vid(l.id)]).length;
+  if (!(await confirma(pend ? `Ainda há ${pend} loja(s) da rota sem registro. Encerrar a jornada mesmo assim?` : 'Encerrar a jornada de hoje?', 'Encerrar jornada'))) return;
+  let gps = null; try { gps = await pegaGPS(30000); } catch (e) {}
+  const s = await selfieConferida('Selfie para encerrar a jornada'); if (!s) return;
+  const t = Date.now();
+  const upd = { fim: t, gpsFim: gps, fotoFim: await comprime(s.cv, 30000), rostoFim: s.rosto, recebidoFim: serverTimestamp() };
+  S.jor = Object.assign({}, S.jor, upd); render();
+  grava(updateDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), upd)); msgSalvo('Jornada encerrada às ' + hm(t));
+}
+
 async function buscaFora() {
   abreModal(`<div class="spread"><h3>Loja fora da rota</h3><button class="btn ghost" id="bf-x">Fechar</button></div>
     <input type="text" id="bf-q" placeholder="Código ou nome da loja" autocomplete="off"><div id="bf-r" class="muted">Carregando lojas…</div>`);
@@ -347,6 +396,10 @@ async function checkin() {
   S.vis[V.id] = visita; S.fotos = [foto]; renderVisita();
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);
+  if (!S.jor || !S.jor.inicio) { // esqueceu de iniciar: a jornada começa no primeiro check-in
+    const reg = { promotorId: S.pid, data: S.hoje, inicio: foto.ts, inicioAuto: true, gpsInicio: gps, rostoInicio: rosto || {}, recebidoInicio: serverTimestamp(), uid: S.uid };
+    S.jor = reg; grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), reg));
+  }
   msgSalvo('Check-in registrado às ' + hm(visita.checkin));
 }
 async function checkout() {

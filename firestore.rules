@@ -49,6 +49,11 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isEquipe() && resource.data.promotorId == meuPromotor());
     }
     // Fotos da visita: id termina com _<promotor>
+    match /dias/{dia}/jornadas/{pid} {
+      allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid);
+      allow create, update: if isAdmin() || (isEquipe() && meuPromotor() == pid && request.resource.data.promotorId == pid);
+      allow delete: if isAdmin();
+    }
     match /dias/{dia}/fotos/{vid} {
       allow read, write: if isAdmin() || (isEquipe() && vid.matches('.*_' + meuPromotor()));
     }
