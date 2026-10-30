@@ -9,9 +9,9 @@ import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-10-30.10';
+export const VERSAO_APP = '2026-10-30.11';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
-const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Panco', 'Pão de forma Plus Vita'];
+const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const MOTIVOS = ['Loja fechada', 'Sem acesso / recebimento', 'Falta de tempo', 'Outro'];
 const TIPOS = [['chegada', 'Chegada'], ['antes', 'Gôndola antes'], ['depois', 'Gôndola depois'], ['extra', 'Foto extra']];

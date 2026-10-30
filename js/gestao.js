@@ -12,7 +12,7 @@ import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jorn
 const VERSAO_GESTAO = '2026-10-30.11';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
-const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Panco', 'Pão de forma Plus Vita'];
+const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
 const CORES = ['#E0457B', '#2F80ED', '#27AE60', '#F2994A', '#9B51E0', '#00A3A3', '#B8860B', '#EB5757', '#56CCF2', '#6FCF97', '#BB6BD9', '#333F99'];
 const LOGO = 'img/logo.png';
