@@ -24,16 +24,23 @@
   <!-- LOGIN -->
   <section id="v-login" class="login" hidden>
     <div class="logo"><img src="img/logo-full.png" alt="Nova Penedo Distribuidora"></div>
-    <h2>Entrar</h2>
-    <form id="f-login" class="stack" autocomplete="on">
-      <label class="field" for="lg-usuario"><span>Login</span><input type="text" id="lg-usuario" autocapitalize="none" autocomplete="username" placeholder="ex.: mariana"></label>
+    <h2>Ativar este celular</h2>
+    <p class="muted" style="margin:0;font-size:14px">O app abre só pelo reconhecimento do rosto. Para ativar este celular, aponte a câmera para o <b>QR de ativação</b> que o supervisor mostra na Gestão, ou digite o código abaixo.</p>
+    <form id="f-ativar" class="stack">
+      <label class="field" for="at-cod"><span>Código de ativação</span><input type="text" id="at-cod" autocapitalize="characters" autocomplete="off" placeholder="ex.: K7QM-2XPA" maxlength="9" style="text-transform:uppercase;font-size:20px;letter-spacing:.12em;text-align:center"></label>
+      <span id="at-msg" class="muted" style="min-height:18px;font-size:13px"></span>
+      <button class="btn primary big" type="submit" id="at-btn">Ativar</button>
+    </form>
+    <details class="sup-login"><summary>Entrar com login e senha (só o supervisor)</summary>
+    <form id="f-login" class="stack" autocomplete="off" style="margin-top:10px">
+      <label class="field" for="lg-usuario"><span>Login</span><input type="text" id="lg-usuario" autocapitalize="none" autocomplete="off" placeholder="ex.: mariana"></label>
       <div class="field"><span>Senha (4 números)</span>
         <div class="pin"><input id="pin-0" inputmode="numeric" maxlength="1" aria-label="Dígito 1"><input id="pin-1" inputmode="numeric" maxlength="1" aria-label="Dígito 2"><input id="pin-2" inputmode="numeric" maxlength="1" aria-label="Dígito 3"><input id="pin-3" inputmode="numeric" maxlength="1" aria-label="Dígito 4"></div>
       </div>
       <span id="lg-msg" class="muted" style="min-height:18px;font-size:13px"></span>
-      <button class="btn primary big" type="submit" id="lg-btn">Entrar</button>
-    </form>
-    <p class="muted" style="font-size:13px;text-align:center">O login e a senha são digitados pelo supervisor no primeiro acesso deste celular. Depois, o app abre pelo reconhecimento do rosto.<br><a href="gestao.html" class="btn ghost">Acesso da gestão</a></p>
+      <button class="btn big" type="submit" id="lg-btn">Entrar</button>
+    </form></details>
+    <p style="text-align:center"><a href="gestao.html" class="btn ghost">Acesso da gestão</a></p>
     <p class="muted" style="font-size:11px;text-align:center" id="versao"></p>
   </section>
 
@@ -94,10 +101,18 @@
 <script type="module" src="js/promotor.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
-  // quando sair versão nova do app, troca e recarrega sozinho uma vez
-  let recarregou = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!recarregou) { recarregou = true; location.reload(); } });
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}));
+  // atualização automática: confere versão nova ao abrir, a cada 5 min e sempre que o app volta para a tela.
+  // Recarrega sozinho, mas espera se a pessoa estiver com a câmera aberta ou digitando.
+  let recarregou = false, pendente = false;
+  const ocupado = () => !!document.querySelector('#modal:not([hidden])') || (document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName));
+  const recarrega = () => { if (recarregou) return; if (ocupado()) { pendente = true; return; } recarregou = true; location.reload(); };
+  navigator.serviceWorker.addEventListener('controllerchange', recarrega);
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => {
+    const confere = () => r.update().catch(() => {});
+    confere(); setInterval(confere, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { confere(); if (pendente) recarrega(); } });
+    setInterval(() => { if (pendente) recarrega(); }, 20000);
+  }).catch(() => {}));
 }
 </script>
 </body>

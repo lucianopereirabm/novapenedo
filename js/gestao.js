@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-10-30.12';
+const VERSAO_GESTAO = '2026-11-03.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -856,14 +856,15 @@ function renderEquipe() {
   const c = $('#v-equipe');
   if (vazioCarregando()) { c.innerHTML = '<div class="empty">Carregando…</div>'; return; }
   c.innerHTML = `<div class="spread"><h2>Equipe e acessos</h2><button class="btn primary" id="eq-novo">+ Novo promotor</button></div>
-    <div class="note">O promotor entra no app com o <b>login</b> e a <b>senha</b> abaixo. Para mudar, clique em <b>Editar</b>. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
+    <div class="note">O promotor entra no app <b>pelo rosto</b>. Para colocar o app num celular, clique em <b>Ativar celular</b> e aponte a câmera do celular para o QR. Login e senha ficam só com a gestão. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th>Termos</th><th></th></tr></thead><tbody>
-    ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 40)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
-      <td style="font-size:13px">${h(p.telefone || '')}<div class="muted">${h(p.email || '')}</div></td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
+    ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
+      <td style="font-size:13px;white-space:normal;min-width:240px">${p.telefone ? `📞 ${h(p.telefone)}` : '<span class="muted">sem telefone</span>'}${p.email ? `<div class="muted">✉ ${h(p.email)}</div>` : ''}${p.endereco || p.cidadeRes ? `<div class="muted">🏠 ${h([p.endereco, [p.cidadeRes, p.ufRes].filter(Boolean).join('/'), p.cepRes].filter(Boolean).join(' · '))}</div>` : '<div class="muted">sem endereço</div>'}</td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
-      <td class="r"><button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></td></tr>`; }).join('')}
+      <td class="r"><div class="row" style="gap:4px;justify-content:flex-end;flex-wrap:nowrap">${a ? `<button class="btn sm primary" data-at="${h(p.id)}" title="Gera o QR para ativar o celular do promotor">Ativar celular</button>` : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
+  c.querySelectorAll('[data-at]').forEach(b => b.onclick = () => ativarCelular(S.promotores.find(p => p.id === b.dataset.at)));
   c.querySelectorAll('[data-tm]').forEach(b => b.onclick = () => pdfTermos(S.termos[b.dataset.tm]));
   c.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => editaPromotor(S.promotores.find(p => p.id === b.dataset.ed)));
 }
@@ -939,6 +940,27 @@ function editaPromotor(p) {
   };
 }
 const fotoFicha = r => r && r.foto ? `<img src="${r.foto}" alt="Foto do rosto" style="width:84px;height:84px;border-radius:50%;object-fit:cover">` : '<div class="av" style="width:84px;height:84px;background:var(--sunk);color:var(--muted);font-size:12px">sem foto</div>';
+// Ativação do celular: código de uso único (vale 24h) em QR; o promotor não precisa saber login nem senha
+async function ativarCelular(p) {
+  const a = S.acessos[p.id]; if (!a) return toast('Crie o acesso do promotor primeiro (Editar).');
+  if (!S.rostos[p.id] && !(await confirma(`${p.nome.split(' ')[0]} ainda não tem foto do rosto cadastrada. Sem a foto, o app abre sem reconhecimento facial. Gerar o QR mesmo assim?`, 'Gerar QR'))) return;
+  const ALF = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const rnd = crypto.getRandomValues(new Uint8Array(8));
+  const cod = Array.from(rnd, x => ALF[x % ALF.length]).join('');
+  const expira = Date.now() + 24 * 3600e3;
+  try { await setDoc(doc(db, 'ativacoes', cod), { usuario: a.usuario, codigo: a.codigo, promotorId: p.id, expira, criado: Date.now() }); }
+  catch (e) { return toast(String(e && e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "ativacoes").' : erroMsg(e), 7000); }
+  const url = location.origin + location.pathname.replace(/gestao\.html$/, '') + 'index.html#ativar=' + cod;
+  const cf = cod.slice(0, 4) + '-' + cod.slice(4);
+  abreModal(`<div class="spread"><h3>Ativar celular · ${h(p.nome.split(' ')[0])}</h3><button class="btn ghost" id="qa-x">Fechar</button></div>
+    <p class="muted" style="margin:0;font-size:14px">No celular do promotor, abra a câmera e aponte para o QR (ou abra o app e digite o código). Vale por 24 horas e só uma vez.</p>
+    <div id="qa-qr" style="display:grid;place-items:center;background:#fff;padding:16px;border-radius:12px"></div>
+    <div style="text-align:center;font:800 28px var(--f-body);letter-spacing:.14em" class="num">${cf}</div>
+    <div class="row end"><a class="btn" target="_blank" rel="noopener" href="https://wa.me/${(p.telefone || '').replace(/\D/g, '') ? '55' + (p.telefone || '').replace(/\D/g, '') : ''}?text=${encodeURIComponent('Ative o app de rotas da Nova Penedo neste celular: ' + url)}">Enviar pelo WhatsApp</a><button class="btn primary" id="qa-cp">Copiar link</button></div>`);
+  $('#qa-x').onclick = fechaModal;
+  $('#qa-cp').onclick = async () => { try { await navigator.clipboard.writeText(url); toast('Link copiado'); } catch (e) { prompt('Copie o link:', url); } };
+  const desenha = () => { if (!window.QRCode) return setTimeout(desenha, 300); const el = $('#qa-qr'); if (el) new QRCode(el, { text: url, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M }); };
+  desenha();
+}
 function erroAcesso(e) {
   const c = (e && e.code) || '';
   if (c.includes('email-already-in-use')) return 'Esse login já existe no sistema de acesso (pode ser de um cadastro antigo). Escolha outro login.';
@@ -1053,6 +1075,24 @@ async function escreveEmLotes(ops, progresso) {
 async function importar(arq) {
   const box = $('#cf-imp'); let d;
   try { d = JSON.parse(await arq.text()); } catch (e) { box.innerHTML = '<div class="note crit">Arquivo inválido.</div>'; return; }
+  if (d.formato === 'rostos-v1') {
+    const itens = Object.entries(d.itens || {}).filter(([pid]) => S.promotores.some(p => p.id === pid));
+    if (!(await confirma(`Cadastrar a foto do rosto de ${itens.length} promotor(es)? A foto atual de cada um será substituída.`, 'Cadastrar fotos'))) return;
+    const linhas = [];
+    for (let i = 0; i < itens.length; i++) {
+      const [pid, x] = itens[i]; const p = S.promotores.find(y => y.id === pid);
+      box.innerHTML = `<div class="note">Lendo o rosto ${i + 1} de ${itens.length} (${h(p.nome.split(' ')[0])})… na primeira vez demora alguns segundos.</div>`;
+      try {
+        const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = x.foto; });
+        const r = await leRosto(img, 608);
+        if (!r) { linhas.push([p.nome, 'rosto não encontrado na foto']); continue; }
+        await setDoc(doc(db, 'rostos', pid), { foto: recorteRosto(img, r.box), desc: r.desc, atualizado: Date.now(), origem: d.fonte || 'arquivo' });
+        linhas.push([p.nome, 'cadastrada']);
+      } catch (e) { linhas.push([p.nome, 'erro: ' + erroMsg(e)]); }
+    }
+    box.innerHTML = `<div class="note ok"><b>Fotos processadas.</b></div><table style="font-size:13px"><thead><tr><th>Promotor</th><th>Foto do rosto</th></tr></thead><tbody>${linhas.map(([a, b]) => `<tr><td>${h(a)}</td><td>${h(b)}</td></tr>`).join('')}</tbody></table>`;
+    return;
+  }
   if (d.formato === 'promotores-v1') {
     const itens = Object.entries(d.itens || {}).filter(([pid]) => S.promotores.some(p => p.id === pid));
     if (!(await confirma(`Completar a ficha de ${itens.length} promotores com os dados do ${d.fonte || 'arquivo'}? Endereço residencial é gravado; telefone e e-mail só onde estiverem vazios.`, 'Completar fichas'))) return;

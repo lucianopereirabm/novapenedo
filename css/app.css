@@ -273,3 +273,6 @@ table.det .pill{font-size:11.5px;padding:3px 8px}
 .ro-passos span.atual{background:var(--brand-y);color:var(--brand-n)}
 .ro-passos span.feito{background:#27AE60;color:#fff}
 .ro-passos[hidden]{display:none}
+
+.sup-login{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface)}
+.sup-login summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--muted)}

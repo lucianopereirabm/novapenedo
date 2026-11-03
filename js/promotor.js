@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.1';
+export const VERSAO_APP = '2026-11-03.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -27,6 +27,27 @@ pins.forEach((el, i) => {
 });
 $('#lg-usuario').value = lsGet('np.usuario') || '';
 $('#versao').textContent = 'Versão do app ' + VERSAO_APP;
+// Ativação do celular por QR/código (o promotor não usa senha)
+async function ativar(codigo) {
+  const c = String(codigo || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const msg = t => $('#at-msg').innerHTML = t;
+  if (c.length < 8) return msg('Digite os 8 caracteres do código.');
+  $('#at-btn').disabled = true; msg('Ativando…');
+  try {
+    const d = await getDoc(doc(db, 'ativacoes', c));
+    if (!d.exists()) throw { code: 'ativacao' };
+    const a = d.data();
+    await signInWithEmailAndPassword(auth, emailPromotor(a.usuario), senhaPromotor(a.codigo));
+    lsSet('np.usuario', a.usuario);
+    deleteDoc(doc(db, 'ativacoes', c)).catch(() => {}); // código de uso único
+    history.replaceState(null, '', location.pathname);
+  } catch (e) {
+    msg(e && e.code === 'ativacao' || String(e && e.code).includes('permission') ? 'Código inválido, já usado ou vencido. Peça um novo ao supervisor.' : erroMsg(e));
+  } finally { $('#at-btn').disabled = false; }
+}
+$('#f-ativar').addEventListener('submit', e => { e.preventDefault(); ativar($('#at-cod').value); });
+$('#at-cod').addEventListener('input', e => { const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); e.target.value = v.length > 4 ? v.slice(0, 4) + '-' + v.slice(4) : v; });
+{ const m = location.hash.match(/ativar=([A-Za-z0-9-]+)/); if (m) { $('#at-cod').value = m[1]; setTimeout(() => ativar(m[1]), 300); } }
 $('#f-login').addEventListener('submit', async e => {
   e.preventDefault();
   const u = semAcento($('#lg-usuario').value.trim()).replace(/[^a-z0-9]/g, '');
@@ -38,7 +59,7 @@ $('#f-login').addEventListener('submit', async e => {
   catch (err) { $('#lg-msg').textContent = erroMsg(err); pins.forEach(x => x.value = ''); pins[0].focus(); }
   finally { $('#lg-btn').disabled = false; }
 });
-$('#sair').onclick = async () => { if (await confirma('Sair do aplicativo?', 'Sair')) { S.unsub.forEach(f => f()); await signOut(auth); location.reload(); } };
+$('#sair').onclick = async () => { if (await confirma('Sair do aplicativo? Para entrar de novo neste celular será preciso um novo QR de ativação do supervisor.', 'Sair')) { S.unsub.forEach(f => f()); await signOut(auth); location.reload(); } };
 
 onAuthStateChanged(auth, async user => {
   if (!user) { show('v-login'); $('#sair').hidden = true; $('#quem').textContent = ''; return; }

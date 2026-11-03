@@ -37,6 +37,13 @@ service cloud.firestore {
       allow create: if isAdmin() || (isEquipe() && request.resource.data.promotorId == meuPromotor());
       allow update, delete: if isAdmin();
     }
+    // Ativação do celular por QR: código de uso único, vale 24h (o promotor não usa senha)
+    match /ativacoes/{cod} {
+      allow get: if resource.data.expira > request.time.toMillis();
+      allow list: if false;
+      allow create, update: if isAdmin();
+      allow delete: if true;
+    }
     match /rostos/{pid}    { allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid); allow write: if isAdmin(); }
 
     // Visitas do dia: promotor só cria/altera as próprias

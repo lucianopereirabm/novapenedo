@@ -13,6 +13,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
 </head>
 <body class="gestao">
 <header class="top"><div class="top-in">
@@ -55,9 +56,18 @@
 <script>
 // mantém a Gestão sempre na versão mais nova (troca e recarrega sozinha uma vez quando sai atualização)
 if ('serviceWorker' in navigator) {
-  let recarregou = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!recarregou) { recarregou = true; location.reload(); } });
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {}));
+  // atualização automática: confere versão nova ao abrir, a cada 5 min e sempre que o app volta para a tela.
+  // Recarrega sozinho, mas espera se a pessoa estiver com a câmera aberta ou digitando.
+  let recarregou = false, pendente = false;
+  const ocupado = () => !!document.querySelector('#modal:not([hidden])') || (document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName));
+  const recarrega = () => { if (recarregou) return; if (ocupado()) { pendente = true; return; } recarregou = true; location.reload(); };
+  navigator.serviceWorker.addEventListener('controllerchange', recarrega);
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => {
+    const confere = () => r.update().catch(() => {});
+    confere(); setInterval(confere, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { confere(); if (pendente) recarrega(); } });
+    setInterval(() => { if (pendente) recarrega(); }, 20000);
+  }).catch(() => {}));
 }
 </script>
 </body>
