@@ -5,11 +5,11 @@ import {
   emailPromotor, senhaPromotor, $, h, semAcento, DIAS_LONGO, ymd, diaSemana, hm, dur, lsGet, lsSet,
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
-import { carregaRosto, leRosto, distRosto, LIMITE } from './rosto.js';
+import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } from './rosto.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-10-30.11';
+export const VERSAO_APP = '2026-11-03.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -105,16 +105,21 @@ function portaoRosto() {
       st('Preparando o reconhecimento… (na primeira vez demora um pouco)');
       await carregaRosto();
     } catch (e) { para(); b.disabled = false; st('Não consegui abrir a câmera. Permita o uso da câmera para este app e tente de novo.'); return; }
-    rodando = true; let acertos = 0; const ini = Date.now();
-    st('Olhe para a câmera, com o rosto dentro do círculo…');
-    while (rodando) {
-      if (Date.now() - ini > 25000) { para(); b.disabled = false; caixa.classList.add('no'); st('<b>Não reconheci.</b> Procure um lugar com mais luz, tire boné ou óculos escuros e tente de novo.'); return; }
-      let r = null; try { if (v.videoWidth) r = await leRosto(v, 320); } catch (e) {}
-      const d = r ? distRosto(r.desc, S.rosto) : null;
-      if (d != null && d <= LIMITE) { acertos++; caixa.classList.add('ok'); caixa.classList.remove('no'); if (acertos >= 2) { st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); setTimeout(libera, 500); return; } }
-      else { acertos = 0; caixa.classList.remove('ok'); if (d != null) { caixa.classList.add('no'); st('Rosto não confere com o cadastro. Fique de frente para a câmera.'); } else { caixa.classList.remove('no'); st('Procurando rosto… olhe para a câmera.'); } }
-      await new Promise(res => setTimeout(res, 250));
-    }
+    rodando = true;
+    // prova de vida: reconhece de frente, vira para um lado, para o outro e volta de frente (foto parada não passa)
+    const passos = $('#ro-passos'); passos.hidden = false;
+    const marca = (n, cls) => passos.querySelectorAll('span').forEach((e, k) => e.className = k < n ? 'feito' : k === n ? 'atual' : '');
+    const res = await provaDeVida({
+      ref: S.rosto, cancelado: () => !rodando,
+      lerRosto: async () => { try { return v.videoWidth ? await leRosto(v, 320) : null; } catch (e) { return null; } },
+      lerMarcos: async () => { try { return v.videoWidth ? await marcosRosto(v, 224) : null; } catch (e) { return null; } },
+      aviso: (txt, n, tipo) => { st(txt); marca(n); caixa.classList.toggle('ok', tipo === 'ok'); caixa.classList.toggle('no', tipo === 'no'); }
+    });
+    if (res.ok) { marca(4); st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); caixa.classList.add('ok'); setTimeout(libera, 500); return; }
+    para(); b.disabled = false; caixa.classList.add('no'); passos.hidden = true;
+    st(res.motivo === 'movimento' ? '<b>Não confirmei o movimento.</b> Vire o rosto devagar para os dois lados quando o app pedir, e volte de frente. Foto não é aceita.'
+      : res.motivo === 'trocou' ? '<b>O rosto mudou durante a conferência.</b> Tente de novo.'
+      : '<b>Não reconheci.</b> Procure um lugar com mais luz, tire boné ou óculos escuros e tente de novo.');
   };
   $('#ro-sup').onclick = () => {
     abreModal(`<h3>Liberar com a senha do supervisor</h3><p class="muted" style="font-size:14px">O supervisor digita o login e a senha deste promotor.</p>

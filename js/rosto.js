@@ -25,7 +25,7 @@ export async function leRosto(fonte, tamanho = 416) {
   const r = await fa.detectSingleFace(fonte, new fa.TinyFaceDetectorOptions({ inputSize: tamanho, scoreThreshold: 0.45 }))
     .withFaceLandmarks().withFaceDescriptor();
   if (!r) return null;
-  return { desc: Array.from(r.descriptor, x => Math.round(x * 1e5) / 1e5), box: r.detection.box, score: r.detection.score };
+  return { desc: Array.from(r.descriptor, x => Math.round(x * 1e5) / 1e5), box: r.detection.box, score: r.detection.score, pts: r.landmarks.positions.map(p => ({ x: p.x, y: p.y })) };
 }
 
 export function distRosto(a, b) {
@@ -43,4 +43,55 @@ export function recorteRosto(fonte, box, lado = 240) {
   const c = document.createElement('canvas'); c.width = c.height = lado;
   c.getContext('2d').drawImage(fonte, x, y, Math.min(m, W), Math.min(m, H), 0, 0, lado, lado);
   return c.toDataURL('image/jpeg', 0.8);
+}
+
+// ---------- prova de vida: o rosto precisa se mexer (foto parada não passa) ----------
+// Só os pontos do rosto (mais rápido que o reconhecimento completo)
+export async function marcosRosto(fonte, tamanho = 320) {
+  await carregaRosto();
+  const r = await fa.detectSingleFace(fonte, new fa.TinyFaceDetectorOptions({ inputSize: tamanho, scoreThreshold: 0.45 })).withFaceLandmarks();
+  if (!r) return null;
+  return { pts: r.landmarks.positions.map(p => ({ x: p.x, y: p.y })), box: r.detection.box };
+}
+// Giro do rosto para os lados: 0 = de frente; positivo/negativo = virado para um lado.
+// Numa foto (plana) esse valor não muda quando ela é inclinada; num rosto de verdade muda bastante.
+export function giroRosto(pts) {
+  const media = idx => idx.reduce((a, i) => ({ x: a.x + pts[i].x / idx.length, y: a.y + pts[i].y / idx.length }), { x: 0, y: 0 });
+  const oe = media([36, 37, 38, 39, 40, 41]), od = media([42, 43, 44, 45, 46, 47]);
+  const meio = { x: (oe.x + od.x) / 2, y: (oe.y + od.y) / 2 };
+  const dist = Math.hypot(od.x - oe.x, od.y - oe.y) || 1;
+  return (pts[30].x - meio.x) / dist;
+}
+// Máquina de passos da prova de vida (sem câmera: recebe uma função que lê o quadro atual).
+// Passos: de frente e reconhecido -> vira para um lado -> vira para o outro -> volta de frente e reconhecido.
+export const VIDA = { frente: 0.14, lado: 0.26, tempo: 40000 };
+// primeiro = +1 ou -1 (lado sorteado: +1 = esquerda de quem está na câmera, -1 = direita)
+export async function provaDeVida({ lerMarcos, lerRosto, ref, aviso, primeiro = Math.random() < 0.5 ? 1 : -1, cancelado = () => false, espera = 200, agora = () => Date.now() }) {
+  const ini = agora(); let passo = 0, acertos = 0, ultimoGiro = null, moveu = 0;
+  const nome = s => s > 0 ? 'ESQUERDA ←' : 'DIREITA →';
+  const msgs = ['Olhe de frente para a câmera…', `Agora vire o rosto devagar para a sua ${nome(primeiro)}`, `Agora vire para a sua ${nome(-primeiro)}`, 'Olhe de frente de novo…'];
+  aviso && aviso(msgs[0], 0);
+  while (!cancelado()) {
+    if (agora() - ini > VIDA.tempo) return { ok: false, motivo: passo === 0 ? 'rosto' : 'movimento' };
+    if (passo === 0 || passo === 3) {
+      const r = await lerRosto();
+      const d = r ? distRosto(r.desc, ref) : null;
+      const g = r && r.pts ? giroRosto(r.pts) : null;
+      if (d != null && d > LIMITE) { acertos = 0; aviso && aviso('Rosto não confere com o cadastro.', passo, 'no'); if (passo === 3) return { ok: false, motivo: 'trocou' }; }
+      else if (d != null && g != null && Math.abs(g) < VIDA.frente) { acertos++; if (acertos >= 2) { if (passo === 3) return { ok: true, dist: d, moveu }; passo = 1; acertos = 0; aviso && aviso(msgs[1], 1, 'ok'); } }
+      else { acertos = 0; aviso && aviso(d == null ? 'Procurando o rosto… olhe para a câmera.' : msgs[passo], passo); }
+    } else {
+      const m = await lerMarcos();
+      if (!m) { aviso && aviso('Não perca o rosto de vista: vire devagar.', passo); }
+      else {
+        const g = giroRosto(m.pts);
+        if (ultimoGiro != null) moveu += Math.abs(g - ultimoGiro); ultimoGiro = g;
+        const alvo = passo === 1 ? primeiro : -primeiro;
+        if (Math.abs(g) > VIDA.lado && Math.sign(g) === alvo) { passo++; acertos = 0; aviso && aviso(msgs[passo], passo, 'ok'); }
+        else if (Math.abs(g) > VIDA.lado) aviso && aviso(`Para o outro lado: sua ${nome(alvo)}`, passo);
+      }
+    }
+    await new Promise(r => setTimeout(r, espera));
+  }
+  return { ok: false, motivo: 'cancelado' };
 }
