@@ -65,6 +65,7 @@ textarea{resize:vertical;min-height:84px}
 .tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--sunk);color:var(--muted);white-space:nowrap}
 .tag.y{background:var(--accent-soft);color:var(--link)}
 .tag.no{background:var(--crit-soft);color:var(--crit)}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
 .progress{height:6px;border-radius:6px;background:var(--sunk);overflow:hidden}
 .progress>i{display:block;height:100%;background:var(--accent)}
 .stops{display:flex;flex-direction:column;gap:8px}

@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.3';
+export const VERSAO_APP = '2026-11-03.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -39,7 +39,8 @@ async function ativar(codigo) {
     const a = d.data();
     await signInWithEmailAndPassword(auth, emailPromotor(a.usuario), senhaPromotor(a.codigo));
     lsSet('np.usuario', a.usuario);
-    lsSet('np.cred', JSON.stringify({ u: a.usuario, c: a.codigo, pid: a.promotorId || '' })); // o celular fica ativado: depois do "Sair" basta o rosto
+    lsSet('np.cred', JSON.stringify({ u: a.usuario, c: a.codigo, pid: a.promotorId || '' }));
+    lsSet('np.ativNova', '1'); try { localStorage.removeItem('np.aviso'); } catch (e) {} // registra este celular como o aparelho do promotor // o celular fica ativado: depois do "Sair" basta o rosto
     deleteDoc(doc(db, 'ativacoes', c)).catch(() => {}); // código de uso único
     history.replaceState(null, '', location.pathname);
   } catch (e) {
@@ -65,6 +66,7 @@ $('#sair').onclick = async () => { if (await confirma('Sair do aplicativo? Para 
 const credAparelho = () => { try { const x = JSON.parse(lsGet('np.cred') || 'null'); return x && x.u && x.c ? x : null; } catch (e) { return null; } };
 function telaLogin() {
   const cr = credAparelho();
+  const av = lsGet('np.aviso'); if (av) { $('#at-msg').innerHTML = `<b style="color:var(--crit)">${h(av)}</b>`; }
   $('#volta').hidden = !cr; $('#ativa-box').hidden = !!cr;
   if (cr) $('#volta-nome').textContent = lsGet('np.nome.' + (cr.pid || '')) || cr.u;
 }
@@ -146,6 +148,10 @@ function portaoRosto() {
       await carregaRosto();
     } catch (e) { para(); b.disabled = false; st('Não consegui abrir a câmera. Permita o uso da câmera para este app e tente de novo.'); return; }
     rodando = true;
+    // aviso por vibração + bipe a cada passo confirmado (quando o rosto está virado, a pessoa não vê a tela)
+    let ac = null; try { ac = new (window.AudioContext || window.webkitAudioContext)(); ac.resume && ac.resume(); } catch (e) {}
+    const bipe = (f, ms) => { try { if (!ac) return; const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = f; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + ms / 1000); } catch (e) {} };
+    const sinal = (fim) => { try { navigator.vibrate && navigator.vibrate(fim ? [120, 80, 120] : 150); } catch (e) {} bipe(fim ? 1320 : 880, fim ? 260 : 140); };
     // prova de vida: reconhece de frente, vira para um lado, para o outro e volta de frente (foto parada não passa)
     const passos = $('#ro-passos'); passos.hidden = false;
     const marca = (n, cls) => passos.querySelectorAll('span').forEach((e, k) => e.className = k < n ? 'feito' : k === n ? 'atual' : '');
@@ -153,10 +159,10 @@ function portaoRosto() {
       ref: S.rosto, cancelado: () => !rodando,
       lerRosto: async () => { try { return v.videoWidth ? await leRosto(v, 320) : null; } catch (e) { return null; } },
       lerMarcos: async () => { try { return v.videoWidth ? await marcosRosto(v, 224) : null; } catch (e) { return null; } },
-      aviso: (txt, n, tipo) => { st(txt); marca(n); caixa.classList.toggle('ok', tipo === 'ok'); caixa.classList.toggle('no', tipo === 'no'); }
+      aviso: (txt, n, tipo) => { if (tipo === 'ok') sinal(false); st(txt); marca(n); caixa.classList.toggle('ok', tipo === 'ok'); caixa.classList.toggle('no', tipo === 'no'); }
     });
-    if (res.ok) { marca(4); st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); caixa.classList.add('ok'); setTimeout(libera, 500); return; }
-    para(); b.disabled = false; caixa.classList.add('no'); passos.hidden = true;
+    if (res.ok) { sinal(true); marca(4); st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); caixa.classList.add('ok'); setTimeout(libera, 500); return; }
+    para(); b.disabled = false; caixa.classList.add('no'); passos.hidden = true; try { navigator.vibrate && navigator.vibrate(500); } catch (e) {} try { ac && ac.close(); } catch (e) {}
     st(res.motivo === 'movimento' ? '<b>Não confirmei o movimento.</b> Vire o rosto devagar para os dois lados quando o app pedir, e volte de frente. Foto não é aceita.'
       : res.motivo === 'trocou' ? '<b>O rosto mudou durante a conferência.</b> Tente de novo.'
       : '<b>Não reconheci.</b> Procure um lugar com mais luz, tire boné ou óculos escuros e tente de novo.');
@@ -230,8 +236,32 @@ function cpfValido(c) {
   const dv = n => { let s = 0; for (let i = 0; i < n; i++) s += +d[i] * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
   return dv(9) === +d[9] && dv(10) === +d[10];
 }
+// Aparelho vinculado: um celular por promotor. Se a Gestão desvincular (ou ativar outro celular), este sai do app.
+async function desvinculado(txt) {
+  S.unsub.forEach(f => { try { f(); } catch (e) {} });
+  try { ['np.cred', 'np.vinc.' + S.pid].forEach(k => localStorage.removeItem(k)); sessionStorage.removeItem('np.rok'); } catch (e) {}
+  lsSet('np.aviso', txt);
+  try { await signOut(auth); } catch (e) {}
+  location.reload();
+}
+async function vinculaAparelho() {
+  const info = await infoAparelho(); const ref = doc(db, 'aparelhos', S.pid);
+  const meu = info.id, reg = lsGet('np.vinc.' + S.pid);
+  const grava = () => { lsSet('np.vinc.' + S.pid, meu); try { localStorage.removeItem('np.ativNova'); } catch (e) {}
+    return setDoc(ref, { promotorId: S.pid, id: meu, modelo: info.modelo, sistema: info.sistema, navegador: info.navegador, ativadoEm: Date.now(), visto: Date.now(), versao: VERSAO_APP }).catch(() => {}); };
+  if (lsGet('np.ativNova')) grava();
+  else if (!reg) { // celular ativado antes desta versão: registra se ninguém estiver registrado
+    try { const d = await getDoc(ref); if (!d.exists()) grava(); else if (d.data().id === meu) lsSet('np.vinc.' + S.pid, meu); else return desvinculado('Este acesso foi ativado em outro celular. Peça um novo QR ao supervisor.'); } catch (e) { return; }
+  } else updateDoc(ref, { visto: Date.now(), versao: VERSAO_APP }).catch(() => {});
+  S.unsub.push(onSnapshot(ref, { includeMetadataChanges: false }, s => {
+    if ((s.metadata && s.metadata.fromCache) || !lsGet('np.vinc.' + S.pid)) return;
+    if (!s.exists()) desvinculado('Este celular foi desvinculado pelo supervisor. Para usar o app aqui, peça um novo QR de ativação.');
+    else if (s.data().id && s.data().id !== meu) desvinculado('Este acesso foi ativado em outro celular. Peça um novo QR ao supervisor.');
+  }, () => {}));
+}
 function abreApp() {
   show('v-rota');
+  vinculaAparelho().catch(() => {});
   S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' }; $('#quem').innerHTML = `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`; render(); }));
   S.unsub.push(onSnapshot(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
@@ -265,7 +295,18 @@ function grava(p, ehFoto) {
   if (ehFoto) { S.pendFotos++; rede(); }
   return p.then(r => r, e => { toast(erroMsg(e), 6000); }).finally(() => { if (ehFoto) { S.pendFotos = Math.max(0, S.pendFotos - 1); rede(); } });
 }
-const msgSalvo = txt => toast(navigator.onLine ? txt : txt + ' (guardado no celular, envia quando tiver sinal)', navigator.onLine ? 3200 : 5000);
+const msgSalvo = () => {}; // sem mensagens de confirmação: a tela já mostra o que foi feito (sem sinal, a faixa no topo avisa)
+// Leva o promotor direto ao próximo passo da visita: fotos obrigatórias → pesquisa de preço → check-out
+function proximoPasso() {
+  setTimeout(() => {
+    if (!S.visita) return; const v = S.vis[S.visita.id]; if (!v || v.status !== 'em_loja') return;
+    const falta = ['antes', 'depois'].find(t => !S.fotos.some(x => x.tipo === t));
+    if (falta) { const b = document.querySelector(`[data-tirar="${falta}"]`); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    const i = S.pesquisa.findIndex(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
+    if (i >= 0) { const inp = document.querySelector(`[data-pq="${i}"]`); if (inp) { inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (document.activeElement && document.activeElement.dataset && document.activeElement.dataset.pq != null) inp.focus(); } return; }
+    const o = $('#v-saida'); if (o) o.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 250);
+}
 
 /* ---------- rota do dia ---------- */
 const wdHoje = () => diaSemana(S.hoje);
@@ -433,7 +474,7 @@ async function checkin() {
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
   if (S.jor && S.jor.almocoInicio && !S.jor.almocoFim) fimAlmoco(foto.ts, gps); // chegou na loja: fim do almoço
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);
-  msgSalvo('Check-in registrado às ' + hm(visita.checkin));
+  proximoPasso();
 }
 async function checkout() {
   const V = S.visita; const v = S.vis[V.id];
@@ -441,13 +482,11 @@ async function checkout() {
   if (semFoto.length) { toast('Para fazer check-out, tire a foto: gôndola ' + semFoto.join(' e ') + '.', 5000); $('#v-fotos').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   const semPreco = S.pesquisa.filter(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
   if (semPreco.length) { toast('Preencha a pesquisa de preço: ' + semPreco.join(', ') + '.', 6000); $('#v-pp').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-  const faltam = S.checklist.filter(q => !(v.checklist || {})[q.replace(/[.~*/\[\]]/g, '_')]).length;
-  if (faltam && !(await confirma(`${faltam} pergunta(s) do checklist sem resposta. Fazer check-out mesmo assim?`, 'Fazer check-out'))) return;
   const b = $('#b-out'); if (b) { b.disabled = true; b.textContent = 'Pegando o GPS…'; }
   let gps = null, dist = null;
   try { gps = await pegaGPS(30000); if (V.loja.lat != null) dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng })); } catch (e) {}
   const t = Date.now();
-  atualiza({ status: 'concluida', checkout: t, gpsOut: gps, distOut: dist }); msgSalvo('Check-out às ' + hm(t));
+  atualiza({ status: 'concluida', checkout: t, gpsOut: gps, distOut: dist }); setTimeout(() => { if (S.visita && S.visita.id === V.id) $('#v-voltar').click(); }, 700); // volta para a rota
 }
 function naoVisitou() {
   abreModal(`<h3>Por que não visitou?</h3><div class="chips" id="mot">${MOTIVOS.map(m => `<button class="chip" aria-pressed="false" data-m="${h(m)}">${h(m)}</button>`).join('')}</div>
@@ -461,7 +500,7 @@ function naoVisitou() {
     let gps = null; try { gps = await pegaGPS(10000); } catch (e) {}
     const visita = novaVisita({ status: 'nao_visitada', motivo: esc, obs, registrado: Date.now(), gpsIn: gps });
     S.vis[S.visita.id] = visita; renderVisita();
-    grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', S.visita.id), visita)); msgSalvo('Registrado');
+    grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', S.visita.id), visita)); setTimeout(() => $('#v-voltar').click(), 500);
   };
 }
 function atualiza(campos) {
@@ -493,34 +532,38 @@ function renderFotos() {
 function salvaFotos(lista) {
   const V = S.visita; S.fotos = lista; renderFotos();
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: lista }), true);
-  atualiza({ fotos: lista.length }); msgSalvo('Foto salva');
+  atualiza({ fotos: lista.length }); proximoPasso();
 }
 /* ---------- pesquisa de preço ---------- */
 const chaveQ = q => q.replace(/[.~*/\[\]]/g, '_');
 const precoRespondido = x => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0));
 const brl2 = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function renderPesquisa(v) {
-  const box = $('#v-pp'); if (box.contains(document.activeElement)) return; // não atrapalha quem está digitando
+  const box = $('#v-pp');
+  { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)])).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
+  if (box.contains(document.activeElement)) return; // não atrapalha quem está digitando
   const resp = v.precos || {}; const pode = v.status === 'em_loja';
   box.innerHTML = S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
-      <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="decimal" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
+      <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
       <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Não tem</button></div></div>`; }).join('');
   const ok = S.pesquisa.filter(q => precoRespondido(resp[chaveQ(q)])).length;
   $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`;
   box.querySelectorAll('[data-pq]').forEach(inp => {
-    inp.oninput = () => { inp.value = inp.value.replace(/[^\d,.]/g, ''); };
+    // máscara de dinheiro: digita só os números e a vírgula entra sozinha (4 → 0,04; 46 → 0,46; 460 → 4,60)
+    inp.oninput = () => { const d = inp.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 5); inp.value = d ? brl2(+d / 100) : ''; };
     inp.onchange = () => {
       const q = S.pesquisa[+inp.dataset.pq]; const t = inp.value.trim().replace(/\./g, ',');
       if (!t) { atualiza({ precos: { [q]: null } }); return; }
       const n = +t.replace(/,(?=.*,)/g, '').replace(',', '.');
       if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
-      atualiza({ precos: { [q]: { preco: Math.round(n * 100) / 100, ts: Date.now() } } }); inp.blur();
+      const prox = S.pesquisa.findIndex((x, k) => k !== +inp.dataset.pq && !precoRespondido(((S.vis[S.visita.id].precos || {})[chaveQ(x)]))); if (prox < 0) inp.blur();
+      atualiza({ precos: { [q]: { preco: Math.round(n * 100) / 100, ts: Date.now() } } }); proximoPasso();
     };
   });
   box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
     const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
-    atualiza({ precos: { [q]: atual ? null : { falta: true, ts: Date.now() } } });
+    atualiza({ precos: { [q]: atual ? null : { falta: true, ts: Date.now() } } }); if (!atual) proximoPasso();
   });
 }
 function renderCheck(v) {

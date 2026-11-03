@@ -44,6 +44,12 @@ service cloud.firestore {
       allow create, update: if isAdmin();
       allow delete: if true;
     }
+    // Celular vinculado ao promotor (um por promotor): o próprio app registra; só a gestão desvincula (apaga)
+    match /aparelhos/{pid} {
+      allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid);
+      allow create, update: if isAdmin() || (isEquipe() && meuPromotor() == pid && request.resource.data.promotorId == pid);
+      allow delete: if isAdmin();
+    }
     match /rostos/{pid}    { allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid); allow write: if isAdmin(); }
 
     // Visitas do dia: promotor só cria/altera as próprias

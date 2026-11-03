@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-03.6';
+const VERSAO_GESTAO = '2026-11-03.7';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -47,6 +47,7 @@ function iniciar() {
   escuta(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
   escuta(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; S.erroRostos = ''; S.qtdRostos = s.size; if (['equipe', 'painel'].includes(S.tab)) render(); }, e => { S.erroRostos = (e && (e.code || e.message)) || 'erro'; if (S.tab === 'equipe') render(); });
   escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
+  escuta(collection(db, 'aparelhos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.aparelhos = m; S.erroAparelhos = ''; if (S.tab === 'equipe') render(); }, e => { S.erroAparelhos = (e && e.code) || 'erro'; if (S.tab === 'equipe') render(); });
   escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
   escuta(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'rotasBackup'), s => { S.bkRotas = s.exists() ? s.data() : null; if (S.tab === 'montar') render(); }, () => {});
@@ -866,11 +867,12 @@ function renderEquipe() {
     ${lista.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
       <td style="font-size:13px;white-space:normal;min-width:240px">${p.telefone ? `📞 ${h(p.telefone)}` : '<span class="muted">sem telefone</span>'}${p.email ? `<div class="muted">✉ ${h(p.email)}</div>` : ''}${p.endereco || p.cidadeRes ? `<div class="muted">🏠 ${h([p.endereco, [p.cidadeRes, p.ufRes].filter(Boolean).join('/'), p.cepRes].filter(Boolean).join(' · '))}</div>` : '<div class="muted">sem endereço</div>'}</td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
-      <td class="r"><div class="row" style="gap:4px;justify-content:flex-end;flex-wrap:nowrap">${a ? `<button class="btn sm primary" data-at="${h(p.id)}" title="Gera o QR para ativar o celular do promotor">Ativar celular</button>` : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
+      <td class="r"><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">${a ? celularCel(p) : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
   $('#eq-filtro').querySelectorAll('button').forEach(b => b.onclick = () => { lsSet('np.eq.filtro', b.dataset.f); renderEquipe(); });
   c.querySelectorAll('[data-at]').forEach(b => b.onclick = () => ativarCelular(S.promotores.find(p => p.id === b.dataset.at)));
+  c.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => desvincularCelular(S.promotores.find(p => p.id === b.dataset.dv)));
   c.querySelectorAll('[data-tm]').forEach(b => b.onclick = () => pdfTermos(S.termos[b.dataset.tm]));
   c.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => editaPromotor(S.promotores.find(p => p.id === b.dataset.ed)));
 }
@@ -946,6 +948,24 @@ function editaPromotor(p) {
   };
 }
 const fotoFicha = r => r && r.foto ? `<img src="${r.foto}" alt="Foto do rosto" style="width:84px;height:84px;border-radius:50%;object-fit:cover">` : '<div class="av" style="width:84px;height:84px;background:var(--sunk);color:var(--muted);font-size:12px">sem foto</div>';
+// Coluna do celular: ativado (com aparelho e último acesso) ou botão para ativar
+function celularCel(p) {
+  const ap = (S.aparelhos || {})[p.id];
+  if (!ap) return `<button class="btn sm primary" data-at="${h(p.id)}" title="Gera o QR para ativar o celular do promotor">Ativar celular</button>`;
+  const quando = t => !t ? '—' : ymd(new Date(t)) === ymd(new Date()) ? 'hoje ' + hm(t) : new Date(t).toLocaleDateString('pt-BR') + ' ' + hm(t);
+  return `<div style="text-align:right;line-height:1.35"><span class="tag ok">📱 Celular ativado</span><div class="muted" style="font-size:11px">${h([ap.modelo, ap.sistema].filter(Boolean).join(' · ') || 'aparelho')}</div><div class="muted" style="font-size:11px">desde ${h(new Date(ap.ativadoEm).toLocaleDateString('pt-BR'))} · visto ${h(quando(ap.visto))}</div></div><button class="btn sm" data-dv="${h(p.id)}" title="Tira o app deste celular; para usar de novo, gere um novo QR">Desvincular</button>`;
+}
+// Desvincula o celular atual: apaga o registro do aparelho e troca a senha interna (o celular perde o acesso)
+async function desvincularCelular(p) {
+  const a = S.acessos[p.id]; const ap = (S.aparelhos || {})[p.id];
+  if (!(await confirma(`Desvincular o celular de ${p.nome.split(' ')[0]}${ap && ap.modelo ? ' (' + ap.modelo + ')' : ''}? O app sai desse celular. Para usar de novo (nele ou em outro), gere um novo QR em "Ativar celular".`, 'Desvincular'))) return;
+  try {
+    await deleteDoc(doc(db, 'aparelhos', p.id));
+    if (a && a.ultAtiv) await deleteDoc(doc(db, 'ativacoes', a.ultAtiv)).catch(() => {});
+    if (a) { let novo; do { novo = String(1000 + crypto.getRandomValues(new Uint16Array(1))[0] % 9000); } while (novo === a.codigo); await gravaAcesso(p.id, a.usuario, novo, a.codigo); }
+    toast(`Celular de ${p.nome.split(' ')[0]} desvinculado.`, 5000);
+  } catch (e) { toast(String(e && e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "aparelhos").' : erroAcesso(e), 7000); }
+}
 // Ativação do celular: código de uso único (vale 24h) em QR; o promotor não precisa saber login nem senha
 async function ativarCelular(p) {
   const a = S.acessos[p.id]; if (!a) return toast('Crie o acesso do promotor primeiro (Editar).');
@@ -953,7 +973,7 @@ async function ativarCelular(p) {
   const ALF = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const rnd = crypto.getRandomValues(new Uint8Array(8));
   const cod = Array.from(rnd, x => ALF[x % ALF.length]).join('');
   const expira = Date.now() + 24 * 3600e3;
-  try { await setDoc(doc(db, 'ativacoes', cod), { usuario: a.usuario, codigo: a.codigo, promotorId: p.id, expira, criado: Date.now() }); }
+  try { await setDoc(doc(db, 'ativacoes', cod), { usuario: a.usuario, codigo: a.codigo, promotorId: p.id, expira, criado: Date.now() }); setDoc(doc(db, 'acessos', p.id), { ultAtiv: cod }, { merge: true }).catch(() => {}); }
   catch (e) { return toast(String(e && e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "ativacoes").' : erroMsg(e), 7000); }
   const url = location.origin + location.pathname.replace(/gestao\.html$/, '') + 'index.html#ativar=' + cod;
   const cf = cod.slice(0, 4) + '-' + cod.slice(4);
