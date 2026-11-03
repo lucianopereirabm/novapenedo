@@ -63,32 +63,31 @@ export function giroRosto(pts) {
   return (pts[30].x - meio.x) / dist;
 }
 // Máquina de passos da prova de vida (sem câmera: recebe uma função que lê o quadro atual).
-// Passos: de frente e reconhecido -> vira para um lado -> vira para o outro -> volta de frente e reconhecido.
+// Passos: de frente e reconhecido -> vira o rosto para um lado (sorteado). Foto parada não consegue virar.
 export const VIDA = { frente: 0.14, lado: 0.26, tempo: 40000 };
 // primeiro = +1 ou -1 (lado sorteado: +1 = esquerda de quem está na câmera, -1 = direita)
 export async function provaDeVida({ lerMarcos, lerRosto, ref, aviso, primeiro = Math.random() < 0.5 ? 1 : -1, cancelado = () => false, espera = 200, agora = () => Date.now() }) {
-  const ini = agora(); let passo = 0, acertos = 0, ultimoGiro = null, moveu = 0;
+  const ini = agora(); let passo = 0, acertos = 0, dist = null, ultimoGiro = null, moveu = 0;
   const nome = s => s > 0 ? 'ESQUERDA ←' : 'DIREITA →';
-  const msgs = ['Olhe de frente para a câmera…', `Agora vire o rosto devagar para a sua ${nome(primeiro)}`, `Agora vire para a sua ${nome(-primeiro)}`, 'Olhe de frente de novo…'];
+  const msgs = ['Olhe de frente para a câmera…', `Agora vire o rosto devagar para a sua ${nome(primeiro)}`];
   aviso && aviso(msgs[0], 0);
   while (!cancelado()) {
     if (agora() - ini > VIDA.tempo) return { ok: false, motivo: passo === 0 ? 'rosto' : 'movimento' };
-    if (passo === 0 || passo === 3) {
+    if (passo === 0) {
       const r = await lerRosto();
       const d = r ? distRosto(r.desc, ref) : null;
       const g = r && r.pts ? giroRosto(r.pts) : null;
-      if (d != null && d > LIMITE) { acertos = 0; aviso && aviso('Rosto não confere com o cadastro.', passo, 'no'); if (passo === 3) return { ok: false, motivo: 'trocou' }; }
-      else if (d != null && g != null && Math.abs(g) < VIDA.frente) { acertos++; if (acertos >= 2) { if (passo === 3) return { ok: true, dist: d, moveu }; passo = 1; acertos = 0; aviso && aviso(msgs[1], 1, 'ok'); } }
-      else { acertos = 0; aviso && aviso(d == null ? 'Procurando o rosto… olhe para a câmera.' : msgs[passo], passo); }
+      if (d != null && d > LIMITE) { acertos = 0; aviso && aviso('Rosto não confere com o cadastro.', 0, 'no'); }
+      else if (d != null && g != null && Math.abs(g) < VIDA.frente) { acertos++; if (acertos >= 2) { dist = d; passo = 1; aviso && aviso(msgs[1], 1, 'ok'); } }
+      else { acertos = 0; aviso && aviso(d == null ? 'Procurando o rosto… olhe para a câmera.' : msgs[0], 0); }
     } else {
       const m = await lerMarcos();
-      if (!m) { aviso && aviso('Não perca o rosto de vista: vire devagar.', passo); }
+      if (!m) { aviso && aviso('Não perca o rosto de vista: vire devagar.', 1); }
       else {
         const g = giroRosto(m.pts);
         if (ultimoGiro != null) moveu += Math.abs(g - ultimoGiro); ultimoGiro = g;
-        const alvo = passo === 1 ? primeiro : -primeiro;
-        if (Math.abs(g) > VIDA.lado && Math.sign(g) === alvo) { passo++; acertos = 0; aviso && aviso(msgs[passo], passo, 'ok'); }
-        else if (Math.abs(g) > VIDA.lado) aviso && aviso(`Para o outro lado: sua ${nome(alvo)}`, passo);
+        if (Math.abs(g) > VIDA.lado && Math.sign(g) === primeiro) return { ok: true, dist, moveu };
+        if (Math.abs(g) > VIDA.lado) aviso && aviso(`Para o outro lado: sua ${nome(primeiro)}`, 1);
       }
     }
     await new Promise(r => setTimeout(r, espera));

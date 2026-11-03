@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.6';
+export const VERSAO_APP = '2026-11-03.7';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -152,7 +152,7 @@ function portaoRosto() {
     let ac = null; try { ac = new (window.AudioContext || window.webkitAudioContext)(); ac.resume && ac.resume(); } catch (e) {}
     const bipe = (f, ms) => { try { if (!ac) return; const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = f; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + ms / 1000); } catch (e) {} };
     const sinal = (fim) => { try { navigator.vibrate && navigator.vibrate(fim ? [120, 80, 120] : 150); } catch (e) {} bipe(fim ? 1320 : 880, fim ? 260 : 140); };
-    // prova de vida: reconhece de frente, vira para um lado, para o outro e volta de frente (foto parada não passa)
+    // prova de vida: reconhece de frente e depois vira o rosto para um lado sorteado (foto parada não passa)
     const passos = $('#ro-passos'); passos.hidden = false;
     const marca = (n, cls) => passos.querySelectorAll('span').forEach((e, k) => e.className = k < n ? 'feito' : k === n ? 'atual' : '');
     const res = await provaDeVida({
@@ -161,9 +161,9 @@ function portaoRosto() {
       lerMarcos: async () => { try { return v.videoWidth ? await marcosRosto(v, 224) : null; } catch (e) { return null; } },
       aviso: (txt, n, tipo) => { if (tipo === 'ok') sinal(false); st(txt); marca(n); caixa.classList.toggle('ok', tipo === 'ok'); caixa.classList.toggle('no', tipo === 'no'); }
     });
-    if (res.ok) { sinal(true); marca(4); st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); caixa.classList.add('ok'); setTimeout(libera, 500); return; }
+    if (res.ok) { sinal(true); marca(2); st('<b>Rosto reconhecido.</b> Abrindo sua rota…'); caixa.classList.add('ok'); setTimeout(libera, 500); return; }
     para(); b.disabled = false; caixa.classList.add('no'); passos.hidden = true; try { navigator.vibrate && navigator.vibrate(500); } catch (e) {} try { ac && ac.close(); } catch (e) {}
-    st(res.motivo === 'movimento' ? '<b>Não confirmei o movimento.</b> Vire o rosto devagar para os dois lados quando o app pedir, e volte de frente. Foto não é aceita.'
+    st(res.motivo === 'movimento' ? '<b>Não confirmei o movimento.</b> Vire o rosto devagar para o lado que o app pedir. Foto não é aceita.'
       : res.motivo === 'trocou' ? '<b>O rosto mudou durante a conferência.</b> Tente de novo.'
       : '<b>Não reconheci.</b> Procure um lugar com mais luz, tire boné ou óculos escuros e tente de novo.');
   };
