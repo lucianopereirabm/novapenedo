@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.5';
+export const VERSAO_APP = '2026-11-03.6';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -541,7 +541,7 @@ const brl2 = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumF
 function renderPesquisa(v) {
   const box = $('#v-pp');
   { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)])).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
-  if (box.contains(document.activeElement)) return; // não atrapalha quem está digitando
+  const ae = document.activeElement; if (ae && ae.tagName === 'INPUT' && box.contains(ae)) return; // não atrapalha quem está digitando
   const resp = v.precos || {}; const pode = v.status === 'em_loja';
   box.innerHTML = S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
