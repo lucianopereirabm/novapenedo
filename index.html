@@ -24,6 +24,14 @@
   <!-- LOGIN -->
   <section id="v-login" class="login" hidden>
     <div class="logo"><img src="img/logo-full.png" alt="Nova Penedo Distribuidora"></div>
+    <div id="volta" class="stack" hidden>
+      <h2>Entrar</h2>
+      <p class="muted" style="margin:0;font-size:14px">Este celular já está ativado para <b id="volta-nome"></b>. Toque em entrar e confirme o rosto.</p>
+      <button class="btn primary big" type="button" id="volta-btn">Entrar com o rosto</button>
+      <span id="volta-msg" class="muted" style="min-height:18px;font-size:13px"></span>
+      <button class="btn" type="button" id="volta-outro" style="font-size:13px">Ativar para outra pessoa</button>
+    </div>
+    <div id="ativa-box" class="stack">
     <h2>Ativar este celular</h2>
     <p class="muted" style="margin:0;font-size:14px">O app abre só pelo reconhecimento do rosto. Para ativar este celular, aponte a câmera para o <b>QR de ativação</b> que o supervisor mostra na Gestão, ou digite o código abaixo.</p>
     <form id="f-ativar" class="stack">
@@ -31,6 +39,7 @@
       <span id="at-msg" class="muted" style="min-height:18px;font-size:13px"></span>
       <button class="btn primary big" type="submit" id="at-btn">Ativar</button>
     </form>
+    </div>
     <details class="sup-login"><summary>Entrar com login e senha (só o supervisor)</summary>
     <form id="f-login" class="stack" autocomplete="off" style="margin-top:10px">
       <label class="field" for="lg-usuario"><span>Login</span><input type="text" id="lg-usuario" autocapitalize="none" autocomplete="off" placeholder="ex.: mariana"></label>

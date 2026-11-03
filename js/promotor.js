@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.2';
+export const VERSAO_APP = '2026-11-03.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -39,6 +39,7 @@ async function ativar(codigo) {
     const a = d.data();
     await signInWithEmailAndPassword(auth, emailPromotor(a.usuario), senhaPromotor(a.codigo));
     lsSet('np.usuario', a.usuario);
+    lsSet('np.cred', JSON.stringify({ u: a.usuario, c: a.codigo, pid: a.promotorId || '' })); // o celular fica ativado: depois do "Sair" basta o rosto
     deleteDoc(doc(db, 'ativacoes', c)).catch(() => {}); // código de uso único
     history.replaceState(null, '', location.pathname);
   } catch (e) {
@@ -59,10 +60,28 @@ $('#f-login').addEventListener('submit', async e => {
   catch (err) { $('#lg-msg').textContent = erroMsg(err); pins.forEach(x => x.value = ''); pins[0].focus(); }
   finally { $('#lg-btn').disabled = false; }
 });
-$('#sair').onclick = async () => { if (await confirma('Sair do aplicativo? Para entrar de novo neste celular será preciso um novo QR de ativação do supervisor.', 'Sair')) { S.unsub.forEach(f => f()); await signOut(auth); location.reload(); } };
+$('#sair').onclick = async () => { if (await confirma('Sair do aplicativo? Para entrar de novo é só tocar em "Entrar com o rosto".', 'Sair')) { S.unsub.forEach(f => f()); try { sessionStorage.removeItem('np.rok'); } catch (e) {} await signOut(auth); location.reload(); } };
+// Celular já ativado: entra de novo só com o rosto (sem código)
+const credAparelho = () => { try { const x = JSON.parse(lsGet('np.cred') || 'null'); return x && x.u && x.c ? x : null; } catch (e) { return null; } };
+function telaLogin() {
+  const cr = credAparelho();
+  $('#volta').hidden = !cr; $('#ativa-box').hidden = !!cr;
+  if (cr) $('#volta-nome').textContent = lsGet('np.nome.' + (cr.pid || '')) || cr.u;
+}
+$('#volta-btn').onclick = async () => {
+  const cr = credAparelho(); if (!cr) return telaLogin();
+  $('#volta-btn').disabled = true; $('#volta-msg').textContent = 'Entrando…';
+  try { await signInWithEmailAndPassword(auth, emailPromotor(cr.u), senhaPromotor(cr.c)); }
+  catch (e) {
+    const c = String(e && e.code);
+    if (/wrong-password|invalid-credential|user-not-found|user-disabled/.test(c)) { localStorage.removeItem('np.cred'); telaLogin(); $('#at-msg').textContent = 'O acesso deste celular foi trocado pelo supervisor. Peça um novo QR de ativação.'; }
+    else $('#volta-msg').textContent = erroMsg(e);
+  } finally { $('#volta-btn').disabled = false; }
+};
+$('#volta-outro').onclick = async () => { if (await confirma('Ativar este celular para outra pessoa? Vai ser preciso um novo QR de ativação do supervisor.', 'Continuar')) { localStorage.removeItem('np.cred'); telaLogin(); } };
 
 onAuthStateChanged(auth, async user => {
-  if (!user) { show('v-login'); $('#sair').hidden = true; $('#quem').textContent = ''; return; }
+  if (!user) { telaLogin(); show('v-login'); $('#sair').hidden = true; $('#quem').textContent = ''; return; }
   if (S.iniciado && user.uid === S.uid) return; // mesma pessoa entrando de novo (liberação pelo supervisor)
   S.uid = user.uid; $('#sair').hidden = false;
   if (user.uid === ADMIN_UID) { location.href = 'gestao.html'; return; }
@@ -85,7 +104,7 @@ onAuthStateChanged(auth, async user => {
 /* ---------- portão do rosto: o app só abre com o rosto do promotor ---------- */
 async function iniciar() {
   S.iniciado = true; show('carregando');
-  try { const pr = await getDoc(doc(db, 'promotores', S.pid)); if (pr.exists() && pr.data().ativo === false) { show('v-semacesso'); $('#v-semacesso').innerHTML = '<b>Cadastro inativo</b>Seu cadastro está inativo. Fale com o supervisor.'; return; } } catch (e) {}
+  try { const pr = await getDoc(doc(db, 'promotores', S.pid)); if (pr.exists()) lsSet('np.nome.' + S.pid, (pr.data().nome || '').split(' ')[0]); if (pr.exists() && pr.data().ativo === false) { show('v-semacesso'); $('#v-semacesso').innerHTML = '<b>Cadastro inativo</b>Seu cadastro está inativo. Fale com o supervisor.'; return; } } catch (e) {}
   let ref = null;
   try { const r = await getDoc(doc(db, 'rostos', S.pid)); if (r.exists()) { ref = r.data(); lsSet('np.rosto.' + S.pid, JSON.stringify({ desc: ref.desc })); } }
   catch (e) {

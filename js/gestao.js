@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-03.5';
+const VERSAO_GESTAO = '2026-11-03.6';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -855,16 +855,21 @@ async function baixaPDF(lista, nomeMes) {
 function renderEquipe() {
   const c = $('#v-equipe');
   if (vazioCarregando()) { c.innerHTML = '<div class="empty">Carregando…</div>'; return; }
-  c.innerHTML = `<div class="spread"><h2>Equipe e acessos</h2><button class="btn primary" id="eq-novo">+ Novo promotor</button></div>
+  const filtro = lsGet('np.eq.filtro') || 'ativos';
+  const nAt = S.promotores.filter(p => p.ativo !== false).length, nIn = S.promotores.length - nAt;
+  const lista = S.promotores.filter(p => filtro === 'todos' || (filtro === 'inativos' ? p.ativo === false : p.ativo !== false));
+  c.innerHTML = `<div class="spread"><h2>Equipe e acessos</h2><div class="row"><div class="seg" id="eq-filtro">${[['ativos', `Ativos (${nAt})`], ['inativos', `Inativos (${nIn})`], ['todos', `Todos (${S.promotores.length})`]].map(([k, t]) => `<button data-f="${k}" aria-pressed="${k === filtro}">${t}</button>`).join('')}</div><button class="btn primary" id="eq-novo">+ Novo promotor</button></div></div>
     ${S.erroRostos ? `<div class="note crit">Não consegui ler as fotos do rosto no banco (${h(S.erroRostos)}). Confira se as regras do Firebase têm o bloco <b>rostos</b> e publique de novo.</div>` : `<div class="muted" style="font-size:12px">Fotos de rosto cadastradas no banco: ${S.qtdRostos ?? '…'}</div>`}
     <div class="note">O promotor entra no app <b>pelo rosto</b>. Para colocar o app num celular, clique em <b>Ativar celular</b> e aponte a câmera do celular para o QR. Login e senha ficam só com a gestão. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th>Termos</th><th></th></tr></thead><tbody>
-    ${S.promotores.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
+    ${lista.length ? '' : `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">Nenhum promotor ${filtro === 'inativos' ? 'inativo' : 'ativo'}.</td></tr>`}
+    ${lista.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
       <td style="font-size:13px;white-space:normal;min-width:240px">${p.telefone ? `📞 ${h(p.telefone)}` : '<span class="muted">sem telefone</span>'}${p.email ? `<div class="muted">✉ ${h(p.email)}</div>` : ''}${p.endereco || p.cidadeRes ? `<div class="muted">🏠 ${h([p.endereco, [p.cidadeRes, p.ufRes].filter(Boolean).join('/'), p.cepRes].filter(Boolean).join(' · '))}</div>` : '<div class="muted">sem endereço</div>'}</td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
       <td class="r"><div class="row" style="gap:4px;justify-content:flex-end;flex-wrap:nowrap">${a ? `<button class="btn sm primary" data-at="${h(p.id)}" title="Gera o QR para ativar o celular do promotor">Ativar celular</button>` : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
+  $('#eq-filtro').querySelectorAll('button').forEach(b => b.onclick = () => { lsSet('np.eq.filtro', b.dataset.f); renderEquipe(); });
   c.querySelectorAll('[data-at]').forEach(b => b.onclick = () => ativarCelular(S.promotores.find(p => p.id === b.dataset.at)));
   c.querySelectorAll('[data-tm]').forEach(b => b.onclick = () => pdfTermos(S.termos[b.dataset.tm]));
   c.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => editaPromotor(S.promotores.find(p => p.id === b.dataset.ed)));
