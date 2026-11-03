@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-03.3';
+const VERSAO_GESTAO = '2026-11-03.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1094,8 +1094,10 @@ async function importar(arq) {
     return;
   }
   if (d.formato === 'promotores-v1') {
-    const itens = Object.entries(d.itens || {}).filter(([pid]) => S.promotores.some(p => p.id === pid));
-    if (!(await confirma(`Completar a ficha de ${itens.length} promotores com os dados do ${d.fonte || 'arquivo'}? Endereço residencial é gravado; telefone e e-mail só onde estiverem vazios.`, 'Completar fichas'))) return;
+    const novos = Object.entries(d.itens || {}).filter(([pid, x]) => x.novo && !S.promotores.some(p => p.id === pid));
+    const itens = Object.entries(d.itens || {}).filter(([pid, x]) => S.promotores.some(p => p.id === pid) || (x.novo && novos.some(([n]) => n === pid)));
+    if (!(await confirma(`Completar a ficha de ${itens.length - novos.length} promotores${novos.length ? ` e cadastrar ${novos.length} novo(s) (${novos.map(([, x]) => x.nome.split(' ')[0]).join(', ')})` : ''} com os dados do ${d.fonte || 'arquivo'}? Endereço residencial é gravado; telefone e e-mail só onde estiverem vazios.`, 'Completar fichas'))) return;
+    for (const [pid, x] of novos) { const v = { nome: x.nome, base: (x.campos || {}).cidadeRes || '', ativo: true, criado: Date.now(), atualizado: Date.now() }; await setDoc(doc(db, 'promotores', pid), v); S.promotores.push(Object.assign({ id: pid }, v)); }
     const linhas = [];
     for (let i = 0; i < itens.length; i++) {
       const [pid, x] = itens[i]; const p = S.promotores.find(y => y.id === pid); const c = x.campos || {}; const upd = {};
