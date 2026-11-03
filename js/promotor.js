@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.7';
+export const VERSAO_APP = '2026-11-03.8';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -308,6 +308,14 @@ function proximoPasso() {
   }, 250);
 }
 
+/* ---------- trava do almoço (horário de início e fim do dia é livre; o banco de horas confere) ---------- */
+const regras = () => regrasJornada(S.cfgApp);
+function almocoTravado() { // ms até poder voltar (0 = liberado)
+  const j = S.jor || {}; if (!j.almocoInicio || j.almocoFim) return 0;
+  return Math.max(0, j.almocoInicio + regras().almocoMinimo * 60000 - Date.now());
+}
+setInterval(() => { if (!$('#v-rota').hidden && (S.jor && S.jor.almocoInicio && !S.jor.almocoFim)) render(); }, 20000);
+
 /* ---------- rota do dia ---------- */
 const wdHoje = () => diaSemana(S.hoje);
 function posDia(l, wd) { const o = l.ordemDia && l.ordemDia[wd]; return typeof o === 'number' ? o : 1000 + (l.ordem || 999); }
@@ -335,7 +343,17 @@ function render() {
   if (extras.length) html += '<div class="label">Fora da rota</div><div class="stops">' + extras.map(v => `<button class="stop" data-loja="${h(v.lojaId)}" data-fora="1"><span class="n">+</span><span class="t"><b>${h(v.lojaNome)}</b><span>${h(v.cidade || '')}</span></span>${statusPill(v)}</button>`).join('') + '</div>';
   html += `<button class="btn" id="b-fora">Visitar loja fora da rota de hoje</button>`;
   html += `<p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
+  const trava = almocoTravado();
+  if (trava) { // almoço: app travado até completar o mínimo
+    const volta = S.jor.almocoInicio + regras().almocoMinimo * 60000;
+    html = `<div class="card stack" style="text-align:center;padding:28px 18px"><div style="font-size:44px">🍽️</div><h2>Bom almoço!</h2>
+      <p style="margin:0">O aplicativo fica <b>bloqueado durante o horário de almoço</b>. Aproveite para descansar.</p>
+      <p class="muted" style="margin:0">Almoço iniciado às <b>${hm(S.jor.almocoInicio)}</b> · o app volta a funcionar às <b>${hm(volta)}</b>.</p>
+      <div class="num" style="font:800 34px var(--f-body)">faltam ${hmin(Math.ceil(trava / 60000))}</div></div>
+      <p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
+  }
   c.innerHTML = html;
+  if (trava) return;
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora));
   $('#b-fora').onclick = buscaFora;
   const ba = $('#b-alm'); if (ba) ba.onclick = almoco;
@@ -358,12 +376,13 @@ async function almoco() {
   const jor = S.jor || {};
   if (!jor.almocoInicio) {
     if (Object.values(S.vis).some(v => v.status === 'em_loja')) return toast('Faça o check-out da loja antes de sair para o almoço.', 5000);
-    if (!(await confirma('Iniciar o horário de almoço agora?', 'Iniciar almoço'))) return;
+    if (!(await confirma(`Iniciar o almoço agora? O app fica travado por ${hmin(regras().almocoMinimo)} e volta às ${hm(Date.now() + regras().almocoMinimo * 60000)}.`, 'Iniciar almoço'))) return;
     let gps = null; try { gps = await pegaGPS(15000); } catch (e) {}
     const t = Date.now(); const reg = { promotorId: S.pid, data: S.hoje, almocoInicio: t, gpsAlmocoInicio: gps, recebidoAlmocoInicio: serverTimestamp(), uid: S.uid };
     S.jor = Object.assign({}, S.jor, reg); render();
     grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), reg, { merge: true })); msgSalvo('Almoço iniciado às ' + hm(t));
   } else if (!jor.almocoFim) {
+    if (almocoTravado()) return render();
     let gps = null; try { gps = await pegaGPS(15000); } catch (e) {}
     fimAlmoco(Date.now(), gps);
   }
@@ -392,6 +411,7 @@ async function buscaFora() {
 /* ---------- visita ---------- */
 let unsubFotos = null;
 function abreVisita(lojaId, fora) {
+  if (almocoTravado()) return render();
   const loja = S.lojas.find(l => l.id === lojaId) || (S.todas || []).find(l => l.id === lojaId) || { id: lojaId, nome: (Object.values(S.vis).find(v => v.lojaId === lojaId) || {}).lojaNome || 'Loja' };
   const ordem = lojasHoje().findIndex(l => l.id === lojaId);
   S.visita = { loja, id: vid(lojaId), fora: fora || ordem < 0, ordem };

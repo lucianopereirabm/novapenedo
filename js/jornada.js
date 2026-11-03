@@ -5,7 +5,8 @@ export const ALMOCO_PADRAO = { min: 60, acimaDe: 360 }; // desconta 1h quando a 
 export function regrasJornada(cfgApp) {
   const c = (cfgApp && cfgApp.jornada) || {};
   const carga = Object.assign({}, CARGA_PADRAO, c.carga || {});
-  return { carga, almocoMin: c.almocoMin ?? ALMOCO_PADRAO.min, almocoAcima: c.almocoAcima ?? ALMOCO_PADRAO.acimaDe, inicioPrevisto: c.inicioPrevisto || '08:00', tolerancia: c.tolerancia ?? 30 };
+  return { carga, almocoMin: c.almocoMin ?? ALMOCO_PADRAO.min, almocoAcima: c.almocoAcima ?? ALMOCO_PADRAO.acimaDe, inicioPrevisto: c.inicioPrevisto || '08:00', tolerancia: c.tolerancia ?? 30,
+    almocoMinimo: c.almocoMinimo ?? 60 };
 }
 
 // Jornada = do primeiro check-in do dia até o check-out da última loja.
