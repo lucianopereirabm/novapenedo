@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.10';
+const VERSAO_GESTAO = '2026-11-04.11';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -610,7 +610,7 @@ function renderMontar() {
   const c = $('#v-montar');
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
-    c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:8px"><h2 style="margin:0">Montar rotas</h2><div class="row" style="gap:6px"><button class="btn sm" id="m-restaura" hidden>Desfazer última alteração</button><button class="btn sm" id="m-copia">Copiar rota…</button><button class="btn sm danger" id="m-limpa">Excluir rota…</button></div></div>
+    c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:8px"><h2 style="margin:0">Montar rotas</h2><div class="row" style="gap:6px"><button class="btn sm" id="m-restaura" hidden>Desfazer última alteração</button><button class="btn sm" id="m-pdf">PDF da rota…</button><button class="btn sm" id="m-copia">Copiar rota…</button><button class="btn sm danger" id="m-limpa">Excluir rota…</button></div></div>
       <div class="card stack"><div class="spread"><h3>Visão da semana</h3><span class="muted" style="font-size:13px">Clientes por dia · clique para editar</span></div><div class="table-wrap" id="m-semana"></div></div>
       <div class="row" style="align-items:end"><label class="field" style="flex:1 1 240px"><span>Promotor</span><select id="m-prom"></select></label>
       <div class="field" style="flex:2 1 320px"><span>Dia da semana</span><div class="chips" id="m-dias"></div></div></div>
@@ -618,7 +618,7 @@ function renderMontar() {
       <div class="card stack"><h3>Adicionar clientes</h3><input type="text" id="m-busca" placeholder="Buscar por código, nome, bairro ou cidade" autocomplete="off"><div id="m-res" style="max-height:70vh;overflow-y:auto"></div></div></div>`;
     $('#m-dias').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip" data-d="${d}" aria-pressed="false">${DIAS[d]}</button>`).join('');
     $('#m-dias').querySelectorAll('.chip').forEach(b => b.onclick = () => { M.wd = +b.dataset.d; lsSet('np.m.dia', M.wd); renderMontar(); });
-    $('#m-limpa').onclick = limparRota; $('#m-copia').onclick = copiarRota;
+    $('#m-limpa').onclick = limparRota; $('#m-copia').onclick = copiarRota; $('#m-pdf').onclick = pdfRotaEscolha;
     $('#m-restaura').onclick = restauraRota;
     $('#m-prom').onchange = e => { M.pid = e.target.value; lsSet('np.m.prom', M.pid); renderMontar(); };
     let t = null; $('#m-busca').oninput = () => { clearTimeout(t); t = setTimeout(renderBusca, 150); };
@@ -701,6 +701,52 @@ function limparRota() {
       fechaModal(); toast(`${ops.length} cliente(s) tirados da rota. Agora é só montar a nova.`, 6000);
     } catch (e) { b.disabled = false; b.textContent = 'Excluir'; toast(erroMsg(e), 6000); }
   };
+}
+// PDF das rotas: um promotor, vários ou todos, num arquivo só (dias da semana e clientes na ordem)
+function pdfRotaEscolha() {
+  const ps = S.promotores.filter(p => p.ativo !== false && [1, 2, 3, 4, 5, 6, 0].some(d => lojasDoDiaWd(p.id, d).length));
+  if (!ps.length) return toast('Nenhum promotor com rota montada.');
+  abreModal(`<div class="spread"><h3>PDF da rota</h3><button class="btn ghost" id="pr-x">Fechar</button></div>
+    <label class="row" style="gap:8px;font-weight:700"><input type="checkbox" id="pr-todos"> Marcar todos</label>
+    <div class="stack" style="gap:6px;max-height:50vh;overflow:auto" id="pr-lista">${ps.map(p => `<label class="row" style="gap:8px"><input type="checkbox" data-pr="${h(p.id)}" ${p.id === M.pid ? 'checked' : ''}> ${h(p.nome)} <span class="muted" style="font-size:12px">· ${new Set([1, 2, 3, 4, 5, 6, 0].flatMap(d => lojasDoDiaWd(p.id, d).map(l => l.id))).size} clientes</span></label>`).join('')}</div>
+    <div class="row end"><button class="btn" id="pr-c">Cancelar</button><button class="btn primary" id="pr-s">Gerar PDF</button></div>`);
+  const cks = () => [...document.querySelectorAll('[data-pr]')];
+  $('#pr-todos').onchange = e => cks().forEach(c => c.checked = e.target.checked);
+  $('#pr-x').onclick = $('#pr-c').onclick = fechaModal;
+  $('#pr-s').onclick = () => { const ids = cks().filter(c => c.checked).map(c => c.dataset.pr); if (!ids.length) return toast('Marque pelo menos um promotor.'); fechaModal(); pdfRotas(ids); };
+}
+async function pdfRotas(ids) {
+  const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
+  const logo = await carregaImg(LOGO).catch(() => null);
+  const d = new J({ unit: 'mm', format: 'a4' }); const W = 210;
+  const topo = (nome, sub) => {
+    d.setFillColor(23, 25, 37); d.rect(0, 0, W, 26, 'F'); d.setFillColor(244, 188, 28); d.rect(0, 26, W, 1.4, 'F');
+    if (logo) try { d.addImage(logo, 'PNG', 12, 6.5, 66, 12.6); } catch (e) {}
+    d.setTextColor(255, 255, 255); d.setFontSize(8.5); d.setFont(undefined, 'normal'); d.text('ROTA DO PROMOTOR', W - 12, 11, { align: 'right' });
+    d.setFontSize(12); d.setFont(undefined, 'bold'); d.text(nome, W - 12, 18.5, { align: 'right' });
+    d.setTextColor(92, 96, 112); d.setFontSize(8); d.setFont(undefined, 'normal'); d.text(sub, 12, 33);
+  };
+  const ord = [1, 2, 3, 4, 5, 6, 0];
+  ids.forEach((pid, k) => {
+    if (k) d.addPage();
+    const nome = promNome(pid); const dias = ord.filter(x => lojasDoDiaWd(pid, x).length);
+    const total = new Set(dias.flatMap(x => lojasDoDiaWd(pid, x).map(l => l.id))).size;
+    topo(nome, `${total} clientes · ${dias.map(x => DIAS[x]).join(', ')} · gerado em ${new Date().toLocaleDateString('pt-BR')} ${hm(Date.now())}`);
+    let y = 38;
+    dias.forEach(x => {
+      const ls = lojasDoDiaWd(pid, x);
+      if (y > 255) { d.addPage(); topo(nome, '(continuação)'); y = 38; }
+      d.setTextColor(23, 25, 37); d.setFontSize(11); d.setFont(undefined, 'bold'); d.text(`${DIAS_LONGO[x].replace(/^./, c => c.toUpperCase())} · ${ls.length} ${ls.length === 1 ? 'cliente' : 'clientes'}`, 12, y + 4);
+      d.autoTable({ startY: y + 6, margin: { left: 12, right: 12, top: 32 }, head: [['#', 'Cód.', 'Cliente', 'Endereço', 'Bairro / cidade']],
+        body: ls.map((l, i) => [i + 1, l.codigo || '', l.nome || '', l.endereco || '', [l.bairro, l.municipio].filter(Boolean).join(' · ')]),
+        styles: { fontSize: 8.4, cellPadding: 1.6, textColor: [23, 25, 37] }, headStyles: { fillColor: [244, 188, 28], textColor: [23, 25, 37], fontStyle: 'bold' },
+        columnStyles: { 0: { cellWidth: 7, halign: 'center' }, 1: { cellWidth: 13 }, 2: { cellWidth: 52 }, 3: { cellWidth: 62 } }, alternateRowStyles: { fillColor: [246, 247, 249] },
+        didDrawPage: () => {} });
+      y = d.lastAutoTable.finalY + 6;
+    });
+  });
+  const n = d.getNumberOfPages(); for (let i = 1; i <= n; i++) { d.setPage(i); d.setFontSize(7.5); d.setTextColor(120, 124, 140); d.text(`Nova Penedo Distribuidora · página ${i} de ${n}`, W / 2, 290, { align: 'center' }); }
+  d.save(`Rota${ids.length === 1 ? ' ' + promNome(ids[0]).split(' ')[0] : 's ' + ids.length + ' promotores'} ${ymd(new Date())}.pdf`);
 }
 // Copia a rota de um dia (na mesma ordem) para outros dias do mesmo promotor
 function copiarRota() {
