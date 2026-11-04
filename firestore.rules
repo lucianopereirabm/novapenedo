@@ -14,17 +14,22 @@ service cloud.firestore {
     function meuPromotor() {
       return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.promotorId;
     }
+    // Verificador automático (só leitura): conta listada em "monitores"
+    function isMonitor() {
+      return logado() && exists(/databases/$(database)/documents/monitores/$(request.auth.uid));
+    }
     function isEquipe() {
       return isAdmin() || (logado() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)));
     }
 
     match /admins/{uid}    { allow read: if isAdmin(); allow write: if isAdmin(); }
+    match /monitores/{uid} { allow read, write: if isAdmin(); }
     match /usuarios/{uid}  { allow read: if isAdmin() || (logado() && request.auth.uid == uid); allow write: if isAdmin(); }
 
     // Cadastros: equipe lê, só administrador altera
-    match /promotores/{id} { allow read: if isEquipe(); allow write: if isAdmin(); }
-    match /lojas/{id}      { allow read: if isEquipe(); allow write: if isAdmin(); }
-    match /config/{id}     { allow read: if isEquipe(); allow write: if isAdmin(); }
+    match /promotores/{id} { allow read: if isEquipe() || isMonitor(); allow write: if isAdmin(); }
+    match /lojas/{id}      { allow read: if isEquipe() || isMonitor(); allow write: if isAdmin(); }
+    match /config/{id}     { allow read: if isEquipe() || isMonitor(); allow write: if isAdmin(); }
 
     // Vendas, trocas e variável: só administrador
     match /vendas/{id}     { allow read, write: if isAdmin(); }
@@ -54,7 +59,7 @@ service cloud.firestore {
 
     // Visitas do dia: promotor só cria/altera as próprias
     match /dias/{dia}/visitas/{vid} {
-      allow read: if isAdmin() || (isEquipe() && resource.data.promotorId == meuPromotor());
+      allow read: if isAdmin() || isMonitor() || (isEquipe() && resource.data.promotorId == meuPromotor());
       allow create: if isAdmin() || (isEquipe() && request.resource.data.promotorId == meuPromotor());
       allow update: if isAdmin() || (isEquipe()
         && resource.data.promotorId == meuPromotor()

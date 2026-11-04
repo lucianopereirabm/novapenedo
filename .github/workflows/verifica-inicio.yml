@@ -1,0 +1,23 @@
+# Avisa no celular do gestor (app ntfy) quem tem rota hoje e ainda não começou.
+# Horários em UTC: 11:35 = 08:35 e 12:35 = 09:35 em São Paulo. Segunda a sábado.
+name: Verifica início das rotas
+on:
+  schedule:
+    - cron: '35 11 * * 1-6'
+    - cron: '35 12 * * 1-6'
+  workflow_dispatch: {}
+jobs:
+  verifica:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Verificar e avisar
+        env:
+          MONITOR_EMAIL: ${{ secrets.MONITOR_EMAIL }}
+          MONITOR_SENHA: ${{ secrets.MONITOR_SENHA }}
+          RODADA: ${{ github.event.schedule == '35 12 * * 1-6' && '2' || '1' }}
+          FORCAR: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        run: node scripts/verifica-inicio.mjs

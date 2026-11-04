@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-04.4';
+export const VERSAO_APP = '2026-11-04.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -316,6 +316,32 @@ function almocoTravado() { // ms até poder voltar (0 = liberado)
 }
 setInterval(() => { if (!$('#v-rota').hidden && (S.jor && S.jor.almocoInicio && !S.jor.almocoFim)) render(); }, 20000);
 
+/* ---------- aviso para o celular do gestor (app ntfy) ---------- */
+// Envia na hora; sem sinal, guarda no celular e envia quando a internet voltar.
+const FILA_AV = 'np.filaAvisos';
+function avisaGestor(tipo, titulo, texto, tags) {
+  const n = (S.cfgApp && S.cfgApp.ntfy) || {}; if (!n.topico || n[tipo] === false) return;
+  let fila = []; try { fila = JSON.parse(localStorage.getItem(FILA_AV) || '[]'); } catch (e) {}
+  fila.push({ topic: n.topico, title: titulo, message: texto, tags, priority: tipo === 'fora' ? 4 : 3, t: Date.now() });
+  try { localStorage.setItem(FILA_AV, JSON.stringify(fila.slice(-50))); } catch (e) {}
+  enviaAvisos();
+}
+let enviandoAv = false;
+async function enviaAvisos() {
+  if (enviandoAv || !navigator.onLine) return; enviandoAv = true;
+  try {
+    let fila = []; try { fila = JSON.parse(localStorage.getItem(FILA_AV) || '[]'); } catch (e) {}
+    while (fila.length) {
+      const a = fila[0]; const atraso = Date.now() - a.t > 5 * 60000;
+      const r = await fetch('https://ntfy.sh/', { method: 'POST', body: JSON.stringify({ topic: a.topic, title: a.title, message: a.message + (atraso ? ` (enviado com atraso: sem sinal às ${hm(a.t)})` : ''), tags: a.tags, priority: a.priority }) });
+      if (!r.ok) break;
+      fila.shift(); try { localStorage.setItem(FILA_AV, JSON.stringify(fila)); } catch (e) {}
+    }
+  } catch (e) {} finally { enviandoAv = false; }
+}
+window.addEventListener('online', () => setTimeout(enviaAvisos, 2000)); setInterval(enviaAvisos, 120000);
+const primNome = () => ((S.prom && S.prom.nome) || 'Promotor').split(' ')[0];
+
 /* ---------- rota do dia ---------- */
 const wdHoje = () => diaSemana(S.hoje);
 function posDia(l, wd) { const o = l.ordemDia && l.ordemDia[wd]; return typeof o === 'number' ? o : 1000 + (l.ordem || 999); }
@@ -502,6 +528,7 @@ async function checkin() {
   if (S.jor && S.jor.almocoInicio && !S.jor.almocoFim) fimAlmoco(foto.ts, gps); // chegou na loja: fim do almoço
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);
   if (V.foraRaio) { try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {} }
+  avisaGestor(V.foraRaio ? 'fora' : 'chegada', `📍 ${primNome()} chegou: ${V.loja.nome}`, `Check-in às ${hm(visita.checkin)}${V.foraRaio ? ` · ⚠️ FORA DA LOJA (${dist} m)` : ''}${rosto && rosto.rostoOk === false ? ' · ⚠️ rosto não confere' : ''}${V.fora ? ' · fora da rota' : ''}`, V.foraRaio ? ['warning'] : ['round_pushpin']);
   proximoPasso();
 }
 async function checkout() {
@@ -514,7 +541,8 @@ async function checkout() {
   let gps = null, dist = null;
   try { gps = await pegaGPS(30000); if (V.loja.lat != null) dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng })); } catch (e) {}
   const t = Date.now();
-  atualiza({ status: 'concluida', checkout: t, gpsOut: gps, distOut: dist }); setTimeout(() => { if (S.visita && S.visita.id === V.id) $('#v-voltar').click(); }, 700); // volta para a rota
+  atualiza({ status: 'concluida', checkout: t, gpsOut: gps, distOut: dist });
+  avisaGestor('saida', `✅ ${primNome()} saiu: ${V.loja.nome}`, `Check-out às ${hm(t)} · ficou ${dur(v.checkin, t)}`, ['white_check_mark']); setTimeout(() => { if (S.visita && S.visita.id === V.id) $('#v-voltar').click(); }, 700); // volta para a rota
 }
 function naoVisitou() {
   abreModal(`<h3>Por que não visitou?</h3><div class="chips" id="mot">${MOTIVOS.map(m => `<button class="chip" aria-pressed="false" data-m="${h(m)}">${h(m)}</button>`).join('')}</div>
@@ -526,6 +554,7 @@ function naoVisitou() {
   $('#mot-s').onclick = async () => {
     const obs = $('#mot-obs').value.trim(); fechaModal();
     let gps = null; try { gps = await pegaGPS(10000); } catch (e) {}
+    avisaGestor('naoVisitou', `🚫 ${primNome()} não visitou: ${S.visita.loja.nome}`, `Motivo: ${esc}${obs ? ' — ' + obs : ''}`, ['no_entry']);
     const visita = novaVisita({ status: 'nao_visitada', motivo: esc, obs, registrado: Date.now(), gpsIn: gps });
     S.vis[S.visita.id] = visita; renderVisita();
     grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', S.visita.id), visita)); setTimeout(() => $('#v-voltar').click(), 500);

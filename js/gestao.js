@@ -2,14 +2,14 @@
 import {
   auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
   deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField,
-  criarAcessoPromotor, apagarContaPromotor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
+  criarAcessoPromotor, apagarContaPromotor, criarContaMonitor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
 import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.6';
+const VERSAO_GESTAO = '2026-11-04.7';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1095,11 +1095,32 @@ async function pdfTermos(t) {
 /* =========================================================
    CONFIGURAÇÕES, IMPORTAR E COPIAR
    ========================================================= */
+// Canal ntfy (parte da configuração que se redesenha quando o canal muda)
+function renderNtfyCanal() {
+  const box = $('#nt-canal'); if (!box) return; box.dataset.t = JSON.stringify(S.empresa.ntfy || {});
+  box.innerHTML = S.empresa.ntfy && S.empresa.ntfy.topico ? `<div class="row" style="gap:14px;align-items:center;flex-wrap:wrap"><div id="nt-qr" style="background:#fff;padding:8px;border-radius:8px"></div><div class="stack" style="gap:6px"><div class="label">Canal</div><div class="num" style="font:700 18px var(--f-body);word-break:break-all">${h(S.empresa.ntfy.topico)}</div><div class="muted" style="font-size:12px">Servidor: ntfy.sh (o padrão do app)</div></div></div>
+      <div class="row" style="gap:14px;flex-wrap:wrap">${[['chegada', 'Chegada na loja'], ['fora', 'Check-in fora da loja'], ['saida', 'Saída da loja'], ['naoVisitou', 'Não visitou'], ['inicio', 'Não começou a rota (08:35 e 09:35)']].map(([k, t]) => `<label class="row" style="gap:6px;font-size:14px"><input type="checkbox" data-nt="${k}" ${S.empresa.ntfy[k] === false ? '' : 'checked'}> ${t}</label>`).join('')}</div>
+      <div class="row"><button class="btn primary" id="nt-s">Salvar alertas</button><button class="btn" id="nt-t">Enviar teste</button><button class="btn ghost" id="nt-novo" title="Gera um canal novo: quem assinou o antigo para de receber">Trocar canal</button></div>`
+      : '<div><button class="btn primary" id="nt-novo">Criar canal de alertas</button></div>';
+  const ntQr = $('#nt-qr'); if (ntQr) { const desenha = () => { if (!window.QRCode) return setTimeout(desenha, 300); if ($('#nt-qr')) new QRCode($('#nt-qr'), { text: 'https://ntfy.sh/' + S.empresa.ntfy.topico, width: 120, height: 120, correctLevel: QRCode.CorrectLevel.M }); }; desenha(); }
+  $('#nt-novo').onclick = async () => {
+    if (S.empresa.ntfy && S.empresa.ntfy.topico && !(await confirma('Trocar o canal? Quem assinou o canal atual para de receber e precisa assinar o novo.', 'Trocar'))) return;
+    const ALF = 'abcdefghijkmnpqrstuvwxyz23456789'; const topico = 'np-alerta-' + Array.from(crypto.getRandomValues(new Uint8Array(14)), x => ALF[x % ALF.length]).join('');
+    S.empresa.ntfy = Object.assign({}, S.empresa.ntfy || {}, { topico });
+    setDoc(doc(db, 'config', 'app'), { ntfy: S.empresa.ntfy }, { merge: true }).then(() => { toast('Canal criado'); renderNtfyCanal(); }, e => toast(erroMsg(e)));
+  };
+  const ntS = $('#nt-s'); if (ntS) ntS.onclick = () => { const o = { topico: S.empresa.ntfy.topico }; document.querySelectorAll('[data-nt]').forEach(i => o[i.dataset.nt] = i.checked); setDoc(doc(db, 'config', 'app'), { ntfy: o }, { merge: true }).then(() => toast('Alertas salvos'), e => toast(erroMsg(e))); };
+  const ntT = $('#nt-t'); if (ntT) ntT.onclick = async () => {
+    try { const r = await fetch('https://ntfy.sh/', { method: 'POST', body: JSON.stringify({ topic: S.empresa.ntfy.topico, title: '🔔 Teste da Gestão Nova Penedo', message: 'Se você recebeu isto, os alertas dos promotores vão chegar neste celular.', tags: ['bell'] }) }); toast(r.ok ? 'Teste enviado. Confira o app ntfy.' : 'O ntfy recusou o envio (' + r.status + ').', 6000); }
+    catch (e) { toast('Não consegui falar com o ntfy: ' + (e.message || e), 6000); }
+  };
+}
 function renderConfig() {
   const c = $('#v-config');
   if (c.dataset.ok) { // só atualiza os valores, sem apagar o resultado da importação
     const put = (id, v) => { const el = $(id); if (el && document.activeElement !== el) { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; } };
     put('#cf-check', S.checklist.join('\n')); put('#cf-pesq', S.pesquisa.join('\n')); put('#cf-raio', S.raio); put('#cf-base', S.regras.base); put('#cf-meta', S.regras.meta); put('#cf-prop', S.regras.prop);
+    { const b = $('#nt-canal'); if (b && b.dataset.t !== JSON.stringify(S.empresa.ntfy || {}) && !b.contains(document.activeElement)) renderNtfyCanal(); }
     return;
   }
   c.dataset.ok = 1;
@@ -1122,6 +1143,12 @@ function renderConfig() {
       <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço mínimo (minutos; o app fica bloqueado nesse tempo · 0 = livre)</span><input type="number" id="cf-almmin" min="0" step="15" value="${regrasJornada(S.empresa).almocoMinimo}"></label></div>
       <label class="field"><span>Início do controle pelo app (dias antes não contam falta)</span><input type="date" id="cf-ini" value="${h(S.empresa.inicioControle || '2026-10-30')}"></label>
       <div><button class="btn primary" id="cf-jor-s">Salvar jornada</button></div></div>
+    <div class="card stack"><h3>Alertas no celular do gestor (app ntfy)</h3>
+      <p class="muted" style="margin:0;font-size:14px">Chegam como notificação no celular, mesmo com tudo fechado. Instale o app gratuito <b>ntfy</b> (Play Store / App Store), toque em <b>+</b> e assine o canal abaixo, ou leia o QR com a câmera.</p>
+      <div id="nt-canal" class="stack"></div>
+      <details><summary style="cursor:pointer;font-weight:600">Verificador automático (quem não começou a rota)</summary>
+        <p class="muted" style="font-size:13px">Roda sozinho às 08:35 e 09:35 (seg a sáb) no GitHub e avisa no canal quem tem rota e ainda não fez check-in. Precisa de um acesso só de leitura, criado aqui.</p>
+        <div class="row"><button class="btn" id="nt-ver">${S.empresa.verificador ? 'Gerar nova senha do verificador' : 'Criar acesso do verificador'}</button></div><div id="nt-ver-r"></div></details></div>
     <div class="card stack"><h3>Dados da empresa nos termos</h3><p class="muted" style="margin:0;font-size:14px">Aparecem nos termos de LGPD e do aparelho que o promotor assina no primeiro acesso.</p>
       <label class="field"><span>Razão social</span><input type="text" id="cf-emp" value="${h(S.empresa.empresa || 'Nova Penedo Distribuidora')}"></label>
       <label class="field"><span>CNPJ</span><input type="text" id="cf-cnpj" value="${h(S.empresa.cnpj || '')}"></label>
@@ -1135,6 +1162,22 @@ function renderConfig() {
   $('#cf-salvar').onclick = async () => {
     try { await setDoc(doc(db, 'config', 'app'), { raio: +$('#cf-raio').value || 150, travaRaio: $('#cf-trava').checked }, { merge: true }); await setDoc(doc(db, 'config', 'variavel'), { base: +$('#cf-base').value || 0, meta: +$('#cf-meta').value || 0, prop: $('#cf-prop').checked }); toast('Configurações salvas'); }
     catch (e) { toast(erroMsg(e)); }
+  };
+  renderNtfyCanal();
+  $('#nt-ver').onclick = async () => {
+    if (!(await confirma('Criar (ou renovar) o acesso só de leitura do verificador automático? Depois você copia o e-mail e a senha para o GitHub.', 'Continuar'))) return;
+    const box = $('#nt-ver-r'); box.innerHTML = '<div class="muted">Criando…</div>';
+    const ALF = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'; const senha = Array.from(crypto.getRandomValues(new Uint8Array(20)), x => ALF[x % ALF.length]).join('');
+    const email = 'verificador-' + Array.from(crypto.getRandomValues(new Uint8Array(5)), x => ALF[x % 32].toLowerCase()).join('') + '@monitor.novapenedo.app';
+    try {
+      const uid = await criarContaMonitor(email, senha);
+      await setDoc(doc(db, 'monitores', uid), { email, criado: Date.now() });
+      if (S.empresa.verificador && S.empresa.verificador.uid && S.empresa.verificador.uid !== uid) await deleteDoc(doc(db, 'monitores', S.empresa.verificador.uid)).catch(() => {});
+      await setDoc(doc(db, 'config', 'app'), { verificador: { uid, email, criado: Date.now() } }, { merge: true });
+      box.innerHTML = `<div class="note ok stack" style="gap:6px"><b>Acesso criado.</b> Copie agora (a senha não aparece de novo):
+        <div>E-mail: <code style="user-select:all">${h(email)}</code></div><div>Senha: <code style="user-select:all">${h(senha)}</code></div>
+        <div style="font-size:13px">No GitHub, abra o repositório <b>novapenedo</b> → <b>Settings</b> → <b>Secrets and variables</b> → <b>Actions</b> → <b>New repository secret</b> e crie dois: <b>MONITOR_EMAIL</b> com o e-mail e <b>MONITOR_SENHA</b> com a senha.</div></div>`;
+    } catch (e) { box.innerHTML = `<div class="note crit">${h(String(e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "monitores").' : erroMsg(e))}</div>`; }
   };
   $('#cf-pesq-s').onclick = () => { const itens = $('#cf-pesq').value.split('\n').map(x => x.trim()).filter(Boolean); if (!itens.length) return toast('Informe pelo menos um produto.'); setDoc(doc(db, 'config', 'pesquisa'), { itens }).then(() => toast('Pesquisa salva'), e => toast(erroMsg(e))); };
   $('#cf-jor-s').onclick = () => {

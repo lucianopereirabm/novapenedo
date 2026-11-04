@@ -66,6 +66,13 @@ export async function criarAcessoPromotor(usuario, codigo, codigoAntigo) {
   }
 }
 
+// Cria a conta só de leitura do verificador automático, sem derrubar a sessão do administrador
+export async function criarContaMonitor(email, senha) {
+  const sec = initializeApp(firebaseConfig, 'ver-' + Date.now()); const sa = getAuth(sec);
+  try { const cr = await createUserWithEmailAndPassword(sa, email, senha); return cr.user.uid; }
+  finally { try { await signOut(sa); } catch (e) {} try { await deleteApp(sec); } catch (e) {} }
+}
+
 // Apaga a conta antiga de login de um promotor (quando o login é trocado). Se não conseguir, só segue: o vínculo é removido na Gestão.
 export async function apagarContaPromotor(usuario, codigo) {
   const sec = initializeApp(firebaseConfig, 'del-' + Date.now());
