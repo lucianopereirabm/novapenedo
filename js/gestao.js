@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.13';
+const VERSAO_GESTAO = '2026-11-04.14';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -411,6 +411,23 @@ async function geocodifica(l) {
   }
   return null;
 }
+// Lojas: primeiro procura a própria loja no mapa (nome + bairro + cidade); depois a rua; depois o bairro. Só aceita resultado na cidade certa.
+async function geocodificaLoja(l) {
+  const sa = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const mun = l.municipio || l.cidade || ''; if (!mun) return geocodifica(l);
+  const q = async params => { const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=br&limit=8&addressdetails=1&accept-language=pt-BR&' + new URLSearchParams(params)).then(r => r.ok ? r.json() : []).catch(() => []); await new Promise(x => setTimeout(x, 1150)); return r || []; };
+  const naCidade = x => { const ad = x.address || {}; return [ad.city, ad.town, ad.municipality, ad.village].some(c => sa(c) === sa(mun)); };
+  const marca = String(l.nome || '').replace(/SUPERMERCADOS?|ATACADISTA|LTDA|S\/A|COMERCIO E INDUSTRIA/gi, '').trim();
+  const tok = sa(marca).split(/\s+/).filter(t => t.length > 2);
+  const ok = (x, nivel) => ({ latAprox: +(+x.lat).toFixed(6), lngAprox: +(+x.lon).toFixed(6), aproxNivel: nivel, aproxRef: 'OpenStreetMap: ' + String(x.display_name).slice(0, 80) });
+  if (tok.length) {
+    const c = (await q({ q: `${marca}, ${l.bairro || ''}, ${mun}, RJ` })).filter(x => ['shop', 'amenity'].includes(x.category) && !['parking', 'fuel', 'bank', 'atm'].includes(x.type) && naCidade(x) && tok.some(t => sa(x.name || x.display_name).includes(t)));
+    if (c.length === 1) return ok(c[0], 'loja');
+  }
+  if (l.endereco) { const x = (await q({ street: String(l.endereco).replace(/\s*-\s*(DE|ATE|ATÉ).*$/i, ''), city: mun, state: 'Rio de Janeiro' })).find(naCidade); if (x) return ok(x, 'rua'); }
+  if (l.bairro) { const x = (await q({ q: `${l.bairro}, ${mun}, RJ` })).find(naCidade); if (x) return ok(x, 'bairro'); }
+  return null;
+}
 // Localiza a residência do promotor (para o deslocamento casa → primeira loja)
 async function localizaCasa(p) {
   if (!p.endereco && !p.cidadeRes) { await updateDoc(doc(db, 'promotores', p.id), { casa: deleteField() }).catch(() => {}); return null; }
@@ -423,20 +440,19 @@ async function localizaCasa(p) {
   return casa;
 }
 // Localiza as lojas sem ponto (1 por segundo, regra do serviço gratuito de mapas)
-async function localizaLojas(lista, aviso) {
-  if (G.rodando) return toast('Já estou localizando as lojas. Aguarde.');
+async function localizaLojas(lista, aviso, silencioso) {
+  if (G.rodando) return silencioso ? null : toast('Já estou localizando as lojas. Aguarde.');
   const falta = lista.filter(l => !pontoLoja(l) && (((l.endereco || l.bairro) && l.municipio) || l.cidade));
-  if (!falta.length) return toast('Todas essas lojas já estão no mapa.');
+  if (!falta.length) return silencioso ? null : toast('Todas essas lojas já estão no mapa.');
   G.rodando = true; let ok = 0;
   try {
     for (let i = 0; i < falta.length; i++) {
       if (aviso) aviso(`Localizando loja ${i + 1} de ${falta.length}…`);
-      const g = await geocodifica(falta[i]);
+      const g = await geocodificaLoja(falta[i]);
       if (g) { ok++; await updateDoc(doc(db, 'lojas', falta[i].id), Object.assign(g, { aproxEm: Date.now() })).catch(() => {}); }
-      await new Promise(res => setTimeout(res, 1100));
     }
   } finally { G.rodando = false; P.ajustar = true; if (S.tab === 'painel') renderPainel(); }
-  if (aviso) aviso(''); toast(`${ok} de ${falta.length} lojas localizadas pelo endereço.${ok < falta.length ? ' As demais ganham o ponto no primeiro check-in.' : ''}`, 6000);
+  if (aviso) aviso(''); if (!silencioso || ok) toast(`${ok} de ${falta.length} ${silencioso ? 'cliente(s) novo(s) da rota localizado(s) no mapa' : 'lojas localizadas pelo endereço'}.${ok < falta.length ? ' As demais ganham o ponto no primeiro check-in.' : ''}`, 6000);
 }
 function mapaGeral(dias) {
   if (!window.L) { setTimeout(() => { if (!P.sel && S.tab === 'painel') mapaGeral(dias); }, 400); return; }
@@ -606,6 +622,14 @@ function renumera(lista) {
   lista.forEach((l, i) => { if (!(l.ordemDia && l.ordemDia[M.wd] === i + 1)) salvaLoja(l, { ordemDia: Object.assign({}, l.ordemDia, { [M.wd]: i + 1 }) }); });
   renderMontar();
 }
+// Cliente que entra numa rota e ainda não tem ponto no mapa: localiza sozinho (uma tentativa por sessão)
+const G_TENTOU = new Set();
+function autoLocalizaRotas() {
+  if (G.rodando) return;
+  const falta = S.lojas.filter(l => l.promotorId && (l.dias || []).length && !pontoLoja(l) && !G_TENTOU.has(l.id));
+  if (!falta.length) return; falta.forEach(l => G_TENTOU.add(l.id));
+  setTimeout(() => localizaLojas(falta, null, true), 1500);
+}
 function renderMontar() {
   const c = $('#v-montar');
   if (!c.dataset.ok) {
@@ -624,6 +648,7 @@ function renderMontar() {
     let t = null; $('#m-busca').oninput = () => { clearTimeout(t); t = setTimeout(renderBusca, 150); };
   }
   if (vazioCarregando()) return;
+  autoLocalizaRotas();
   const bk = S.bkRotas; const br = $('#m-restaura'); br.hidden = !bk; if (bk) br.title = `Volta como estava antes de: ${bk.desc} (${new Date(bk.em).toLocaleString('pt-BR')})`;
   const ps = S.promotores.filter(p => p.ativo !== false);
   $('#m-semana').innerHTML = `<table class="semana num"><thead><tr><th>Promotor</th>${[1, 2, 3, 4, 5, 6].map(d => `<th>${DIAS[d]}</th>`).join('')}<th>Clientes</th></tr></thead><tbody>${ps.map(p => `<tr><td>${h(p.nome.split(' ').slice(0, 2).join(' '))}</td>${[1, 2, 3, 4, 5, 6].map(d => { const n = lojasDoDiaWd(p.id, d).length; return `<td><button class="${n ? '' : 'zero'} ${p.id === M.pid && d === M.wd ? 'on' : ''}" data-sp="${h(p.id)}" data-sd="${d}">${n || '–'}</button></td>`; }).join('')}<td>${S.lojas.filter(l => l.promotorId === p.id).length}</td></tr>`).join('')}</tbody></table>`;
