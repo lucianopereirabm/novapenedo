@@ -28,6 +28,17 @@ export async function leRosto(fonte, tamanho = 416) {
   return { desc: Array.from(r.descriptor, x => Math.round(x * 1e5) / 1e5), box: r.detection.box, score: r.detection.score, pts: r.landmarks.positions.map(p => ({ x: p.x, y: p.y })) };
 }
 
+// Para fotos do cadastro: se o rosto estiver muito perto (ocupando a foto toda), tenta de novo com margem em volta
+export async function leRostoFoto(img) {
+  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  for (const m of [0, 0.35, 0.7]) {
+    let fonte = img;
+    if (m) { const c = document.createElement('canvas'); c.width = Math.round(W * (1 + 2 * m)); c.height = Math.round(H * (1 + 2 * m)); const g = c.getContext('2d'); g.fillStyle = '#e8e8e4'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, W * m, H * m, W, H); fonte = c; }
+    for (const t of [608, 416]) { const r = await leRosto(fonte, t); if (r) return { r, fonte }; }
+  }
+  return null;
+}
+
 export function distRosto(a, b) {
   if (!a || !b || a.length !== b.length) return null;
   let s = 0; for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; s += d * d; }

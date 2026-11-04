@@ -5,11 +5,11 @@ import {
   criarAcessoPromotor, apagarContaPromotor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
-import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
+import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.1';
+const VERSAO_GESTAO = '2026-11-04.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -912,9 +912,9 @@ function editaPromotor(p) {
     fm.textContent = 'Lendo o rosto da foto… (na primeira vez demora alguns segundos)';
     try {
       const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(f); });
-      const r = await leRosto(img, 608);
+      const lf = await leRostoFoto(img); const r = lf && lf.r;
       if (!r) { novaFoto = null; fm.innerHTML = '<span style="color:var(--crit)">Não encontrei um rosto nessa foto. Use uma foto de frente, mais de perto.</span>'; return; }
-      novaFoto = { foto: recorteRosto(img, r.box), desc: r.desc };
+      novaFoto = { foto: recorteRosto(lf.fonte, r.box), desc: r.desc };
       $('#ep-foto').innerHTML = fotoFicha(novaFoto); fm.innerHTML = '<span style="color:var(--ok)">Rosto encontrado. Clique em Salvar para gravar.</span>';
     } catch (err) { fm.textContent = 'Não consegui ler a foto: ' + (err.message || err); }
   };
@@ -1111,9 +1111,9 @@ async function importar(arq) {
       box.innerHTML = `<div class="note">Lendo o rosto ${i + 1} de ${itens.length} (${h(p.nome.split(' ')[0])})… na primeira vez demora alguns segundos.</div>`;
       try {
         const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = x.foto; });
-        const r = await leRosto(img, 608);
+        const lf = await leRostoFoto(img); const r = lf && lf.r;
         if (!r) { linhas.push([p.nome, 'rosto não encontrado na foto']); continue; }
-        await setDoc(doc(db, 'rostos', pid), { foto: recorteRosto(img, r.box), desc: r.desc, atualizado: Date.now(), origem: d.fonte || 'arquivo' });
+        await setDoc(doc(db, 'rostos', pid), { foto: recorteRosto(lf.fonte, r.box), desc: r.desc, atualizado: Date.now(), origem: d.fonte || 'arquivo' });
         linhas.push([p.nome, 'cadastrada']);
       } catch (e) { linhas.push([p.nome, 'erro: ' + erroMsg(e)]); }
     }
