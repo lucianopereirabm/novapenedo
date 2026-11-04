@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.4';
+const VERSAO_GESTAO = '2026-11-04.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -113,7 +113,7 @@ function diaDoPromotor(pid) {
   const agora = vs.find(x => x.v.status === 'em_loja');
   const ents = vs.map(x => x.v.checkin).filter(Boolean), sais = vs.map(x => x.v.checkout).filter(Boolean);
   const tempo = vs.reduce((a, x) => a + (x.v.checkin && x.v.checkout ? x.v.checkout - x.v.checkin : 0), 0);
-  const alertas = vs.filter(x => x.v.rostoOk === false || (x.v.distIn != null && x.v.distIn > S.raio)).length;
+  const alertas = vs.filter(x => x.v.rostoOk === false || (foraLoja(x.v))).length;
   const ultima = vs.filter(x => x.v.checkout).sort((a, b) => b.v.checkout - a.v.checkout)[0];
   const J = calcJornada({ j: (P.jor || {})[pid], vs: vs.map(x => x.v), date: P.data, regras: regrasJornada(S.empresa), hoje: ymd(new Date()) });
   if (P.data === ymd(new Date()) && paradas.some(x => !x.extra && !x.v)) J.hojeAberto = true; // ainda tem loja na rota: saldo só no fim
@@ -139,7 +139,7 @@ function estrada(d) {
   let ult = -1; ps.forEach((x, i) => { if (x.v) ult = i; });
   const pct = ps.length > 1 ? ult / (ps.length - 1) * 100 : (ult >= 0 ? 100 : 0);
   return `<div class="estrada"><div class="trilho"></div><div class="feito" style="width:${Math.max(0, pct)}%"></div>
-    ${ps.map((x, i) => { const v = x.v; const c = !v ? '' : v.status === 'concluida' ? (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio) ? 'ok al' : 'ok') : v.status === 'em_loja' ? 'live' : 'no';
+    ${ps.map((x, i) => { const v = x.v; const c = !v ? '' : v.status === 'concluida' ? (v.rostoOk === false || (foraLoja(v)) ? 'ok al' : 'ok') : v.status === 'em_loja' ? 'live' : 'no';
       const tip = `${i + 1}. ${x.nome}${v ? (v.status === 'nao_visitada' ? ' · não visitada: ' + v.motivo : ' · ' + hm(v.checkin) + (v.checkout ? '–' + hm(v.checkout) : ' (em loja)')) : ' · pendente'}`;
       return `<span class="pt ${c}" style="left:${ps.length > 1 ? i / (ps.length - 1) * 100 : 50}%" title="${h(tip)}"></span>`; }).join('')}</div>`;
 }
@@ -210,7 +210,7 @@ function ultimoEvento(d) {
   const ev = [];
   d.paradas.forEach(x => { const v = x.v; if (!v) return; const n = `${x.extra ? '' : x.ordem + 'ª · '}${h(x.nome)}`;
     if (v.status === 'nao_visitada') ev.push({ t: v.registrado || 0, html: `<span class="ic-ev no">✕</span> Não visitou <b>${n}</b> · ${h(v.motivo || '')} · ${hm(v.registrado)}` });
-    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${v.distIn != null && v.distIn > S.raio ? ` · <span style="color:var(--crit)">⚠️ fora da loja (${v.distIn} m)</span>` : ''}` });
+    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${foraLoja(v) ? ` · <span style="color:var(--crit)">⚠️ fora da loja (${v.distIn} m)</span>` : ''}` });
       if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
   const jr = (P.jor || {})[d.pid];
   if (jr && jr.almocoInicio) ev.push({ t: jr.almocoInicio, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Saiu para o almoço às ${hm(jr.almocoInicio)}` });
@@ -253,7 +253,7 @@ function resumoMes(D, mes) {
       const nao = vs.filter(([, v]) => v.status === 'nao_visitada').length;
       const fora = vs.filter(([k, v]) => !naRota.has(k) && v.status !== 'nao_visitada').length;
       const sem = d < hoje ? lojas.filter(l => !m[l.id + '_' + pid]) : [];
-      const al = vs.filter(([, v]) => v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)).length;
+      const al = vs.filter(([, v]) => v.rostoOk === false || (foraLoja(v))).length;
       const J = calcJornada({ j: (D.jor[d] || {})[pid], vs: vs.map(([, v]) => v), date: d, regras, hoje });
       const falta = !J.tem && d < hoje && lojas.length > 0 && J.esperado > 0 && !vs.some(([, v]) => v.status === 'nao_visitada');
       if (!lojas.length && !vs.length && !J.tem) return;
@@ -341,6 +341,8 @@ function garanteMapa(chave) {
 }
 function enquadra(pts) { if (P.ajustar && pts.length) { P.mapa.fitBounds(pts, { padding: [40, 40], maxZoom: 15 }); P.ajustar = false; } }
 // Ponto da loja no mapa: exato (check-in/manual) ou aproximado (pelo endereço). O raio do check-in usa só o exato.
+// check-in fora da loja: passou do limite gravado na visita (150 m com local exato; folga maior com local aproximado)
+const foraLoja = v => !!v && v.distIn != null && v.distIn > (v.limite || S.raio);
 const pontoLoja = l => l && l.lat != null ? [+l.lat, +l.lng] : l && l.latAprox != null ? [+l.latAprox, +l.lngAprox] : null;
 const G = { rodando: false };
 async function geocodifica(l) {
@@ -411,7 +413,7 @@ function renderDetalhe(d) {
   const linhas = d.paradas.map(x => {
     const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">Não visitada</span>` : '<span class="pill live">Em loja</span>';
     const al = !v || v.status === 'nao_visitada' ? (v ? `<span class="muted" style="font-size:12px">${h(v.motivo)}</span>` : '') :
-      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn > S.raio ? '⚠️ fora da loja · ' : ''}${v.distIn} m</span>` : ''].join(' ');
+      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${foraLoja(v) ? 'no' : ''}">${foraLoja(v) ? '⚠️ fora da loja · ' : ''}${v.distIn} m${v.localAprox ? ' (aprox.)' : ''}</span>` : ''].join(' ');
     return `<tr class="${v ? 'click' : ''}" ${v ? `data-v="${h(x.id)}"` : ''}><td>${x.extra ? '+' : x.ordem}</td><td><b>${h(x.nome)}</b><div class="muted" style="font-size:12px">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</div></td>
       <td>${st}</td><td>${v && v.checkin ? hm(v.checkin) + '–' + (v.checkout ? hm(v.checkout) : '…') : '—'}</td><td>${v && v.checkin && v.checkout ? dur(v.checkin, v.checkout) : '—'}</td><td class="conf">${al}</td></tr>`;
   }).join('');
@@ -484,7 +486,7 @@ function desenhaMapa(d) {
     L.circleMarker(p, { radius: 5, color: '#fff', weight: 2, fillColor: '#27AE60', fillOpacity: 1 }).bindTooltip(`GPS do check-in · ${h(x.nome)} · ${hm(v.checkin || v.registrado)}${v.distIn != null ? ' · ' + v.distIn + ' m da loja' : ''}`).addTo(P.camada); });
   rota.forEach(y => {
     const v = y.x.v; pts.push(y.p);
-    const cor = !v ? '#fff' : v.status === 'nao_visitada' ? '#EB5757' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (v.distIn != null && v.distIn > S.raio)) ? '#EB5757' : '#27AE60';
+    const cor = !v ? '#fff' : v.status === 'nao_visitada' ? '#EB5757' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (foraLoja(v))) ? '#EB5757' : '#27AE60';
     const txt = !v ? '#171925' : '#fff';
     L.marker(y.p, { zIndexOffset: 500, icon: L.divIcon({ className: '', html: `<div class="mk${y.aprox ? ' aprox' : ''}" style="background:${cor};color:${txt}">${y.x.extra ? '+' : y.x.ordem}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
       .bindPopup(`<b>${y.x.extra ? 'Fora da rota' : y.x.ordem + 'ª parada'} · ${h(y.x.nome)}</b><br>${!v ? 'Pendente' : v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${y.aprox ? '<br><i>ponto aproximado pelo endereço</i>' : ''}`).addTo(P.camada);
@@ -513,7 +515,7 @@ async function detalheVisita(date, id) {
   abreModal(`<div class="spread" style="align-items:flex-start"><div><div class="label">${h(v.promotorNome || prim(v.promotorId))} · ${dataBR(date)}</div><h3 style="font-size:20px">${h(v.lojaNome)}</h3></div><button class="btn ghost" id="md-x">Fechar</button></div>
     ${v.status === 'nao_visitada' ? `<div class="note warn"><b>Não visitada:</b> ${h(v.motivo)}${v.obs ? ' — ' + h(v.obs) : ''}</div>` :
     `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout)}</b></div></div>
-     <div class="note ${v.semCoord ? 'warn' : v.distIn > S.raio ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m da loja` : ''}${v.distOut != null ? ` · check-out a ${v.distOut} m` : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
+     <div class="note ${v.semCoord ? 'warn' : foraLoja(v) ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m ${v.localAprox ? 'do endereço (local aproximado, tolerância ' + (v.limite || 500) + ' m)' : 'da loja'}` : ''}${foraLoja(v) ? ' · <b>⚠️ fora da loja</b>' : ''}${v.distOut != null ? ` · check-out a ${v.distOut} m` : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
      ${linhaEnvio(v)}
      ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
      ${v.gpsIn && loja ? `<div class="row"><button class="btn sm" id="md-local">Usar este ponto como local da loja</button><a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
@@ -524,7 +526,7 @@ async function detalheVisita(date, id) {
   $('#md-x').onclick = fechaModal;
   const bl = $('#md-local');
   if (bl) bl.onclick = async () => {
-    if (!(await confirma(`Gravar o local do check-in como localização de ${loja.nome}? A partir daí o check-in dessa loja só abre dentro do raio de ${S.raio} m.`, 'Gravar local'))) return;
+    if (!(await confirma(`Gravar o local do check-in como localização de ${loja.nome}? A partir daí o check-in dessa loja é conferido no raio de ${S.raio} m.`, 'Gravar local'))) return;
     updateDoc(doc(db, 'lojas', loja.id), { lat: v.gpsIn.lat, lng: v.gpsIn.lng, coordFonte: 'check-in ' + dataBR(date), atualizado: Date.now() }).then(() => toast('Local da loja gravado'), e => toast(erroMsg(e)));
   };
   if (v.status !== 'nao_visitada') {

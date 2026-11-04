@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-04.3';
+export const VERSAO_APP = '2026-11-04.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -430,9 +430,9 @@ function renderVisita() {
   $('#v-pill').innerHTML = statusPill(v);
   const st = $('#v-status');
   if (!v) {
-    const temLocal = V.loja.lat != null;
+    const temLocal = V.loja.lat != null || V.loja.latAprox != null;
     st.innerHTML = `<button class="btn primary big" id="b-in">Fazer check-in<span style="font-size:13px;font-weight:500;opacity:.85">GPS + selfie na frente da loja</span></button>
-      ${temLocal ? `<div class="note">Check-in liberado até ${S.raio} m da loja.</div>` : '<div class="note warn">Esta loja ainda não tem localização cadastrada. O seu check-in vai registrar o local para a gestão conferir.</div>'}
+      ${temLocal ? `<div class="note">${V.loja.lat != null ? `Check-in conferido até ${S.raio} m da loja.` : `Check-in conferido até ${Math.max(500, S.raio)} m do endereço da loja (local aproximado).`}</div>` : '<div class="note warn">Esta loja ainda não tem localização cadastrada. O seu check-in vai registrar o local para a gestão conferir.</div>'}
       <button class="btn" id="b-nao">Não consegui visitar esta loja</button>`;
     $('#b-in').onclick = checkin; $('#b-nao').onclick = naoVisitou; $('#v-detalhes').hidden = true; return;
   }
@@ -442,7 +442,8 @@ function renderVisita() {
     $('#v-detalhes').hidden = true; return;
   }
   st.innerHTML = `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout || Date.now())}</b></div></div>
-    ${v.distIn != null ? (v.distIn > (v.raio || S.raio) ? `<div class="note crit"><b>⚠️ Check-in fora da loja</b> · a ${v.distIn >= 1000 ? (v.distIn / 1000).toFixed(1).replace('.', ',') + ' km' : v.distIn + ' m'} da loja (o certo é até ${v.raio || S.raio} m). A gestão foi avisada.</div>` : `<div class="note ok">Check-in a ${v.distIn} m da loja (precisão do GPS ${v.gpsIn ? v.gpsIn.prec : '?'} m).</div>`) : ''}`;
+    ${v.distIn != null ? (v.distIn > (v.limite || v.raio || S.raio) ? `<div class="note crit"><b>⚠️ Check-in fora da loja</b> · a ${v.distIn >= 1000 ? (v.distIn / 1000).toFixed(1).replace('.', ',') + ' km' : v.distIn + ' m'} ${v.localAprox ? 'do endereço' : 'da loja'} (o certo é até ${v.limite || v.raio || S.raio} m). A gestão foi avisada.</div>` : `<div class="note ok">Check-in a ${v.distIn} m ${v.localAprox ? 'do endereço (local aproximado)' : 'da loja'} (precisão do GPS ${v.gpsIn ? v.gpsIn.prec : '?'} m).</div>`)
+      : `<div class="note warn">Loja sem localização cadastrada: a distância do check-in não foi conferida. A gestão vai fixar o local.</div>`}`;
   $('#v-detalhes').hidden = false; renderFotos(); renderCheck(v); renderPesquisa(v);
   if (document.activeElement !== $('#v-obs')) $('#v-obs').value = v.obs || '';
   $('#v-saida').innerHTML = v.status === 'em_loja' ? `<button class="btn primary big" id="b-out">Fazer check-out</button>` : `<div class="note ok">Visita concluída às ${hm(v.checkout)}.</div>`;
@@ -460,10 +461,14 @@ async function checkin() {
   let gps;
   try { gps = await pegaGPS(45000); } catch (e) { toast(e.message, 6000); b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
   let dist = null;
-  if (V.loja.lat != null) {
-    dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng }));
-    if (dist > S.raio) {
-      if (S.cfgApp && S.cfgApp.travaRaio) { // bloqueio ligado na Gestão
+  // ponto da loja: exato (fixado pela gestão) ou aproximado pelo endereço (com folga maior, porque pode errar)
+  const aprox = V.loja.lat == null && V.loja.latAprox != null;
+  const ponto = V.loja.lat != null ? { lat: +V.loja.lat, lng: +V.loja.lng } : aprox ? { lat: +V.loja.latAprox, lng: +V.loja.lngAprox } : null;
+  const limite = aprox ? Math.max(500, S.raio) : S.raio; V.limite = limite; V.aprox = aprox;
+  if (ponto) {
+    dist = Math.round(distancia(gps, ponto));
+    if (dist > limite) {
+      if (S.cfgApp && S.cfgApp.travaRaio && !aprox) { // bloqueio ligado na Gestão
         b.disabled = false; b.firstChild.textContent = 'Fazer check-in';
         abreModal(`<h3 style="color:var(--crit)">⚠️ Check-in fora da loja</h3><p>Você está a <b>${dist >= 1000 ? (dist / 1000).toFixed(1).replace('.', ',') + ' km' : dist + ' m'}</b> da loja. O check-in só é liberado até ${S.raio} m.</p><div class="row end"><button class="btn primary" id="lg-ok">Entendi</button></div>`);
         $('#lg-ok').onclick = fechaModal; return;
@@ -491,7 +496,7 @@ async function checkin() {
   }
   b.disabled = false; b.firstChild.textContent = 'Fazer check-in';
   const foto = { d: await comprime(cv), ts: Date.now(), tipo: 'chegada', gps };
-  const visita = novaVisita(Object.assign({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, foraRaio: !!V.foraRaio, raio: S.raio, semCoord: V.loja.lat == null, fotos: 1 }, rosto || {}));
+  const visita = novaVisita(Object.assign({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, foraRaio: !!V.foraRaio, raio: S.raio, limite: V.limite, localAprox: !!V.aprox, semCoord: V.loja.lat == null && !V.aprox, fotos: 1 }, rosto || {}));
   S.vis[V.id] = visita; S.fotos = [foto]; renderVisita();
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
   if (S.jor && S.jor.almocoInicio && !S.jor.almocoFim) fimAlmoco(foto.ts, gps); // chegou na loja: fim do almoço
