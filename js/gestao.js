@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.2';
+const VERSAO_GESTAO = '2026-11-04.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1054,6 +1054,7 @@ function renderConfig() {
     <div class="card stack"><h3>Checklist da visita</h3><p class="muted" style="margin:0;font-size:14px">Uma pergunta por linha.</p><textarea id="cf-check" rows="6">${h(S.checklist.join('\n'))}</textarea><div><button class="btn primary" id="cf-check-s">Salvar checklist</button></div></div>
     <div class="card stack"><h3>Check-in e variável</h3>
       <label class="field"><span>Raio do check-in (metros)</span><input type="number" id="cf-raio" min="30" step="10" value="${S.raio}"></label>
+      <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-trava" ${S.empresa && S.empresa.travaRaio ? 'checked' : ''}> Bloquear o check-in fora do raio (desligado = o app avisa e deixa fazer, com alerta na gestão)</label>
       <label class="field"><span>Variável da rota (R$)</span><input type="number" id="cf-base" step="10" value="${S.regras.base}"></label>
       <label class="field"><span>Faturamento mínimo da rota (R$)</span><input type="number" id="cf-meta" step="1000" value="${S.regras.meta}"></label>
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
@@ -1079,7 +1080,7 @@ function renderConfig() {
   </div>`;
   $('#cf-check-s').onclick = () => { const itens = $('#cf-check').value.split('\n').map(s => s.trim()).filter(Boolean); if (!itens.length) return toast('Escreva pelo menos uma pergunta.'); setDoc(doc(db, 'config', 'checklist'), { itens }).then(() => toast('Checklist salvo'), e => toast(erroMsg(e))); };
   $('#cf-salvar').onclick = async () => {
-    try { await setDoc(doc(db, 'config', 'app'), { raio: +$('#cf-raio').value || 150 }, { merge: true }); await setDoc(doc(db, 'config', 'variavel'), { base: +$('#cf-base').value || 0, meta: +$('#cf-meta').value || 0, prop: $('#cf-prop').checked }); toast('Configurações salvas'); }
+    try { await setDoc(doc(db, 'config', 'app'), { raio: +$('#cf-raio').value || 150, travaRaio: $('#cf-trava').checked }, { merge: true }); await setDoc(doc(db, 'config', 'variavel'), { base: +$('#cf-base').value || 0, meta: +$('#cf-meta').value || 0, prop: $('#cf-prop').checked }); toast('Configurações salvas'); }
     catch (e) { toast(erroMsg(e)); }
   };
   $('#cf-pesq-s').onclick = () => { const itens = $('#cf-pesq').value.split('\n').map(x => x.trim()).filter(Boolean); if (!itens.length) return toast('Informe pelo menos um produto.'); setDoc(doc(db, 'config', 'pesquisa'), { itens }).then(() => toast('Pesquisa salva'), e => toast(erroMsg(e))); };

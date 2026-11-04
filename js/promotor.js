@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-04.1';
+export const VERSAO_APP = '2026-11-04.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -456,18 +456,24 @@ function novaVisita(extra) {
     recebidoIn: serverTimestamp(), recebido: serverTimestamp() }, extra);
 }
 async function checkin() {
-  const V = S.visita; const b = $('#b-in'); b.disabled = true; b.firstChild.textContent = 'Pegando o GPS…';
+  const V = S.visita; V.foraRaio = false; const b = $('#b-in'); b.disabled = true; b.firstChild.textContent = 'Pegando o GPS…';
   let gps;
   try { gps = await pegaGPS(45000); } catch (e) { toast(e.message, 6000); b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
   let dist = null;
   if (V.loja.lat != null) {
     dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng }));
     if (dist > S.raio) {
-      b.disabled = false; b.firstChild.textContent = 'Fazer check-in';
-      abreModal(`<h3>Você está longe da loja</h3><p>O GPS indica <b>${dist >= 1000 ? (dist / 1000).toFixed(1).replace('.', ',') + ' km' : dist + ' m'}</b> da ${h(V.loja.nome)}. O check-in só é liberado até ${S.raio} m.</p>
-        <p class="muted" style="font-size:13px">Precisão do GPS agora: ${gps.prec} m. Se você já está na porta da loja, vá para um lugar aberto, espere alguns segundos e tente de novo.</p>
-        <div class="row end"><button class="btn primary" id="lg-ok">Entendi</button></div>`);
-      $('#lg-ok').onclick = fechaModal; return;
+      const trava = !!(S.cfgApp && S.cfgApp.travaRaio);
+      const longe = dist >= 1000 ? (dist / 1000).toFixed(1).replace('.', ',') + ' km' : dist + ' m';
+      try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
+      const esc = await new Promise(res => {
+        abreModal(`<h3 style="color:var(--crit)">⚠️ Check-in fora do cliente</h3><p>O GPS indica que você está a <b>${longe}</b> da loja <b>${h(V.loja.nome)}</b>. O check-in deve ser feito até <b>${S.raio} m</b> da loja.</p>
+          <p class="muted" style="font-size:13px">Precisão do GPS agora: ${gps.prec} m. Se você já está na porta da loja, vá para um lugar aberto, espere alguns segundos e tente de novo.${trava ? '' : ' Se fizer o check-in assim mesmo, a visita vai para a gestão com <b>alerta de fora do cliente</b>.'}</p>
+          <div class="row end">${trava ? '' : '<button class="btn" id="lg-f">Fazer check-in assim mesmo</button>'}<button class="btn primary" id="lg-ok">Tentar de novo</button></div>`);
+        $('#lg-ok').onclick = () => { fechaModal(); res('t'); }; const f = $('#lg-f'); if (f) f.onclick = () => { fechaModal(); res('f'); };
+      });
+      if (esc !== 'f') { b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
+      V.foraRaio = true;
     }
   }
   let cv = null, rosto = null;
@@ -490,7 +496,7 @@ async function checkin() {
   }
   b.disabled = false; b.firstChild.textContent = 'Fazer check-in';
   const foto = { d: await comprime(cv), ts: Date.now(), tipo: 'chegada', gps };
-  const visita = novaVisita(Object.assign({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, semCoord: V.loja.lat == null, fotos: 1 }, rosto || {}));
+  const visita = novaVisita(Object.assign({ status: 'em_loja', checkin: foto.ts, checkout: null, gpsIn: gps, distIn: dist, foraRaio: !!V.foraRaio, raio: S.raio, semCoord: V.loja.lat == null, fotos: 1 }, rosto || {}));
   S.vis[V.id] = visita; S.fotos = [foto]; renderVisita();
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
   if (S.jor && S.jor.almocoInicio && !S.jor.almocoFim) fimAlmoco(foto.ts, gps); // chegou na loja: fim do almoço
