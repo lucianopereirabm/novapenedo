@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-03.8';
+export const VERSAO_APP = '2026-11-04.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -367,7 +367,7 @@ function cartaoJornada() {
   const alm = jor.almocoInicio && !jor.almocoFim
     ? `<div class="jor-alm on"><span>🍽️ Almoço desde <b>${hm(jor.almocoInicio)}</b> · ${hmin((Date.now() - jor.almocoInicio) / 60000)}</span><button class="btn primary sm" id="b-alm">Encerrar almoço</button></div>`
     : jor.almocoFim ? `<div class="jor-alm"><span>🍽️ Almoço ${hm(jor.almocoInicio)}–${hm(jor.almocoFim)} · ${hmin((jor.almocoFim - jor.almocoInicio) / 60000)}</span></div>`
-    : (pend && !J.emLoja ? `<div class="jor-alm"><span class="muted">Hora do almoço? Marque o início e o fim.</span><button class="btn sm" id="b-alm">Iniciar almoço</button></div>` : '');
+    : (!J.emLoja ? `<div class="jor-alm"><span class="muted">Hora do almoço? Marque o início e o fim.</span><button class="btn sm" id="b-alm">Iniciar almoço</button></div>` : '');
   const desc = J.almoco ? `<span class="muted" style="font-size:12px"> (almoço ${J.almocoMarcado ? hmin(J.almoco) : 'de 1h'} descontado)</span>` : '';
   if (J.andamento || pend) return `<div class="jor card on"><div style="flex:1"><div class="label">Jornada desde ${hm(J.inicio)}</div><b class="num">${hmin(J.trabalhado)} trabalhadas${J.andamento ? '' : ' até a última saída'}</b>${desc}${alm}</div></div>`;
   return `<div class="jor card fim"><div style="flex:1"><div class="label">Jornada do dia</div><b class="num">${hm(J.inicio)}–${hm(J.fim)} · ${hmin(J.trabalhado)}</b> <span class="muted num" style="font-size:12px">saldo ${saldoTxt(J.saldo)}</span>${desc}${alm}</div></div>`;
@@ -376,7 +376,8 @@ async function almoco() {
   const jor = S.jor || {};
   if (!jor.almocoInicio) {
     if (Object.values(S.vis).some(v => v.status === 'em_loja')) return toast('Faça o check-out da loja antes de sair para o almoço.', 5000);
-    if (!(await confirma(`Iniciar o almoço agora? O app fica travado por ${hmin(regras().almocoMinimo)} e volta às ${hm(Date.now() + regras().almocoMinimo * 60000)}.`, 'Iniciar almoço'))) return;
+    const mn = regras().almocoMinimo;
+    if (!(await confirma(mn ? `Iniciar o almoço agora? O app fica travado por ${hmin(mn)} e volta às ${hm(Date.now() + mn * 60000)}.` : 'Iniciar o horário de almoço agora?', 'Iniciar almoço'))) return;
     let gps = null; try { gps = await pegaGPS(15000); } catch (e) {}
     const t = Date.now(); const reg = { promotorId: S.pid, data: S.hoje, almocoInicio: t, gpsAlmocoInicio: gps, recebidoAlmocoInicio: serverTimestamp(), uid: S.uid };
     S.jor = Object.assign({}, S.jor, reg); render();

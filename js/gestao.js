@@ -9,7 +9,7 @@ import { leRosto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-03.8';
+const VERSAO_GESTAO = '2026-11-04.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1065,7 +1065,7 @@ function renderConfig() {
       <label class="field" style="flex:1"><span>Descontar quando a jornada passar de (horas)</span><input type="number" id="cf-almac" min="0" step="0.5" value="${regrasJornada(S.empresa).almocoAcima / 60}"></label></div>
       <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Início previsto do dia</span><input type="time" id="cf-inip" value="${h(regrasJornada(S.empresa).inicioPrevisto)}"></label>
       <label class="field" style="flex:1"><span>Alerta amarelo após (minutos sem check-in)</span><input type="number" id="cf-tol" min="5" step="5" value="${regrasJornada(S.empresa).tolerancia}"></label></div>
-      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço mínimo (minutos; o app fica bloqueado nesse tempo)</span><input type="number" id="cf-almmin" min="0" step="15" value="${regrasJornada(S.empresa).almocoMinimo}"></label></div>
+      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço mínimo (minutos; o app fica bloqueado nesse tempo · 0 = livre)</span><input type="number" id="cf-almmin" min="0" step="15" value="${regrasJornada(S.empresa).almocoMinimo}"></label></div>
       <label class="field"><span>Início do controle pelo app (dias antes não contam falta)</span><input type="date" id="cf-ini" value="${h(S.empresa.inicioControle || '2026-10-30')}"></label>
       <div><button class="btn primary" id="cf-jor-s">Salvar jornada</button></div></div>
     <div class="card stack"><h3>Dados da empresa nos termos</h3><p class="muted" style="margin:0;font-size:14px">Aparecem nos termos de LGPD e do aparelho que o promotor assina no primeiro acesso.</p>
