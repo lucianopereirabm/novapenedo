@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.9';
+const VERSAO_GESTAO = '2026-11-04.10';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -610,7 +610,7 @@ function renderMontar() {
   const c = $('#v-montar');
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
-    c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:8px"><h2 style="margin:0">Montar rotas</h2><div class="row" style="gap:6px"><button class="btn sm" id="m-restaura" hidden>Desfazer última limpeza</button><button class="btn sm danger" id="m-limpa">Excluir rota…</button></div></div>
+    c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:8px"><h2 style="margin:0">Montar rotas</h2><div class="row" style="gap:6px"><button class="btn sm" id="m-restaura" hidden>Desfazer última alteração</button><button class="btn sm" id="m-copia">Copiar rota…</button><button class="btn sm danger" id="m-limpa">Excluir rota…</button></div></div>
       <div class="card stack"><div class="spread"><h3>Visão da semana</h3><span class="muted" style="font-size:13px">Clientes por dia · clique para editar</span></div><div class="table-wrap" id="m-semana"></div></div>
       <div class="row" style="align-items:end"><label class="field" style="flex:1 1 240px"><span>Promotor</span><select id="m-prom"></select></label>
       <div class="field" style="flex:2 1 320px"><span>Dia da semana</span><div class="chips" id="m-dias"></div></div></div>
@@ -618,7 +618,7 @@ function renderMontar() {
       <div class="card stack"><h3>Adicionar clientes</h3><input type="text" id="m-busca" placeholder="Buscar por código, nome, bairro ou cidade" autocomplete="off"><div id="m-res" style="max-height:70vh;overflow-y:auto"></div></div></div>`;
     $('#m-dias').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => `<button class="chip" data-d="${d}" aria-pressed="false">${DIAS[d]}</button>`).join('');
     $('#m-dias').querySelectorAll('.chip').forEach(b => b.onclick = () => { M.wd = +b.dataset.d; lsSet('np.m.dia', M.wd); renderMontar(); });
-    $('#m-limpa').onclick = limparRota;
+    $('#m-limpa').onclick = limparRota; $('#m-copia').onclick = copiarRota;
     $('#m-restaura').onclick = restauraRota;
     $('#m-prom').onchange = e => { M.pid = e.target.value; lsSet('np.m.prom', M.pid); renderMontar(); };
     let t = null; $('#m-busca').oninput = () => { clearTimeout(t); t = setTimeout(renderBusca, 150); };
@@ -672,7 +672,7 @@ function limparRota() {
     <label class="field"><span>Quais dias</span><select id="lr-dia"><option value="todos">A semana toda</option><option value="um">Só ${DIAS_LONGO[M.wd]}</option></select></label>
     <label class="ck"><input type="checkbox" id="lr-cart"> <span>Tirar também os clientes da carteira do promotor <span class="muted">(eles deixam de contar na variável dele até serem colocados de novo)</span></span></label>
     <div class="note" id="lr-res"></div>
-    <div class="note warn" style="font-size:13px">Antes de excluir, o sistema guarda uma cópia: o botão <b>Desfazer última limpeza</b> volta tudo como estava. As visitas já feitas não são apagadas.</div>
+    <div class="note warn" style="font-size:13px">Antes de excluir, o sistema guarda uma cópia: o botão <b>Desfazer última alteração</b> volta tudo como estava. As visitas já feitas não são apagadas.</div>
     <div class="row end"><button class="btn" id="lr-c">Cancelar</button><button class="btn primary danger" id="lr-s">Excluir</button></div>`);
   const alvo = () => {
     const quem = $('#lr-quem').value, dia = $('#lr-dia').value, cart = $('#lr-cart').checked;
@@ -700,6 +700,50 @@ function limparRota() {
       for (let i = 0; i < ops.length; i += 400) { const wb = writeBatch(db); ops.slice(i, i + 400).forEach(([id, v]) => wb.update(doc(db, 'lojas', id), v)); await wb.commit(); }
       fechaModal(); toast(`${ops.length} cliente(s) tirados da rota. Agora é só montar a nova.`, 6000);
     } catch (e) { b.disabled = false; b.textContent = 'Excluir'; toast(erroMsg(e), 6000); }
+  };
+}
+// Copia a rota de um dia (na mesma ordem) para outros dias do mesmo promotor
+function copiarRota() {
+  if (!M.pid) return toast('Escolha o promotor primeiro.');
+  const nome = promNome(M.pid);
+  abreModal(`<div class="spread"><h3>Copiar rota · ${h(nome.split(' ')[0])}</h3><button class="btn ghost" id="cr-x">Fechar</button></div>
+    <label class="field"><span>Copiar a rota de</span><select id="cr-de">${[1, 2, 3, 4, 5, 6, 0].map(d => `<option value="${d}" ${d === M.wd ? 'selected' : ''}>${DIAS_LONGO[d]} (${lojasDoDiaWd(M.pid, d).length} clientes)</option>`).join('')}</select></label>
+    <div class="field"><span>Para os dias</span><div class="chips" id="cr-para"></div></div>
+    <label class="field"><span>O que fazer com a rota que já existe nesses dias</span><select id="cr-modo"><option value="subst">Substituir: o dia fica igual ao de origem</option><option value="juntar">Juntar: mantém os clientes e acrescenta os da origem no fim</option></select></label>
+    <div class="note" id="cr-res"></div>
+    <div class="note warn" style="font-size:13px">Antes de copiar, o sistema guarda uma cópia: o botão <b>Desfazer última alteração</b> volta tudo como estava.</div>
+    <div class="row end"><button class="btn" id="cr-c">Cancelar</button><button class="btn primary" id="cr-s">Copiar</button></div>`);
+  const para = new Set();
+  const pinta = () => {
+    const de = +$('#cr-de').value; [...para].forEach(d => { if (d === de) para.delete(d); });
+    $('#cr-para').innerHTML = [1, 2, 3, 4, 5, 6, 0].filter(d => d !== de).map(d => `<button class="chip" data-d="${d}" aria-pressed="${para.has(d)}">${DIAS[d]} · ${lojasDoDiaWd(M.pid, d).length}</button>`).join('');
+    $('#cr-para').querySelectorAll('.chip').forEach(b => b.onclick = () => { const d = +b.dataset.d; para.has(d) ? para.delete(d) : para.add(d); pinta(); });
+    const n = lojasDoDiaWd(M.pid, de).length, modo = $('#cr-modo').value;
+    $('#cr-res').innerHTML = !para.size ? 'Escolha um ou mais dias de destino.' : !n ? `A rota de ${DIAS_LONGO[de]} está vazia.` :
+      `Os <b>${n}</b> clientes de ${DIAS_LONGO[de]} vão para ${[...para].map(d => DIAS_LONGO[d]).join(', ')}${modo === 'subst' ? `, <b>substituindo</b> o que já estava lá (${[...para].map(d => DIAS[d] + ': ' + lojasDoDiaWd(M.pid, d).length).join(' · ')} hoje)` : ', depois dos clientes que já estão lá'}.`;
+  };
+  $('#cr-de').onchange = pinta; $('#cr-modo').onchange = pinta; pinta();
+  $('#cr-x').onclick = $('#cr-c').onclick = fechaModal;
+  $('#cr-s').onclick = async () => {
+    const de = +$('#cr-de').value, modo = $('#cr-modo').value, src = lojasDoDiaWd(M.pid, de);
+    if (!para.size || !src.length) return toast(!para.size ? 'Escolha os dias de destino.' : 'A rota de origem está vazia.');
+    const b = $('#cr-s'); b.disabled = true; b.textContent = 'Guardando cópia…';
+    try {
+      const afetadas = new Map(); const pega = l => { if (!afetadas.has(l.id)) afetadas.set(l.id, { l, dias: new Set((l.dias || []).map(Number)), od: Object.assign({}, l.ordemDia) }); return afetadas.get(l.id); };
+      [...para].forEach(t => {
+        const atuais = lojasDoDiaWd(M.pid, t); let pos;
+        if (modo === 'subst') { atuais.forEach(l => { if (!src.includes(l)) { const x = pega(l); x.dias.delete(t); delete x.od[t]; } }); pos = 0; }
+        else pos = atuais.length;
+        src.forEach((l, i) => { const x = pega(l); if (modo === 'juntar' && x.dias.has(t)) return; x.dias.add(t); x.od[t] = modo === 'subst' ? i + 1 : ++pos; });
+      });
+      const desc = `copiar rota de ${DIAS_LONGO[de]} de ${nome} para ${[...para].map(d => DIAS_LONGO[d]).join(', ')}`;
+      const copia = {}; afetadas.forEach(({ l }) => copia[l.id] = { promotorId: l.promotorId || '', dias: l.dias || [], ordemDia: l.ordemDia || {} });
+      await setDoc(doc(db, 'config', 'rotasBackup'), { em: Date.now(), desc, lojas: copia });
+      b.textContent = 'Copiando…';
+      const ops = [...afetadas.values()].map(({ l, dias, od }) => [l.id, { dias: [...dias].sort((a, c) => a - c), ordemDia: od, atualizado: Date.now() }]);
+      for (let i = 0; i < ops.length; i += 400) { const wb = writeBatch(db); ops.slice(i, i + 400).forEach(([id, v]) => wb.update(doc(db, 'lojas', id), v)); await wb.commit(); }
+      fechaModal(); toast(`Rota de ${DIAS_LONGO[de]} copiada para ${[...para].map(d => DIAS_LONGO[d]).join(', ')}.`, 6000);
+    } catch (e) { b.disabled = false; b.textContent = 'Copiar'; toast(erroMsg(e), 6000); }
   };
 }
 async function restauraRota() {
