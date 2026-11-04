@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.11';
+const VERSAO_GESTAO = '2026-11-04.12';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -715,37 +715,93 @@ function pdfRotaEscolha() {
   $('#pr-x').onclick = $('#pr-c').onclick = fechaModal;
   $('#pr-s').onclick = () => { const ids = cks().filter(c => c.checked).map(c => c.dataset.pr); if (!ids.length) return toast('Marque pelo menos um promotor.'); fechaModal(); pdfRotas(ids); };
 }
+// ----- passagens: tarifas por cidade e entre cidades (Configurações) -----
+const semAc = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+const PASS_PADRAO = { tarifas: { 'VOLTA REDONDA': 5.90, 'BARRA MANSA': 5.45, 'ANGRA DOS REIS': 5.80, 'RESENDE': 4.00 }, inter: { 'BARRA MANSA|VOLTA REDONDA': 4.45 }, aPe: 1 };
+const regrasPass = () => { const c = (S.empresa && S.empresa.passagens) || {}; return { tarifas: Object.assign({}, PASS_PADRAO.tarifas, c.tarifas || {}), inter: Object.assign({}, PASS_PADRAO.inter, c.inter || {}), aPe: c.aPe ?? PASS_PADRAO.aPe }; };
+function tarifaTrecho(R, a, b) {
+  const A = semAc(a), B = semAc(b);
+  if (A && A === B) return R.tarifas[A];
+  return R.inter[[A, B].sort().join('|')];
+}
+// Custo de um dia: casa → lojas na ordem → casa. 1 passagem por trecho acima da distância a pé.
+async function custoDia(pid, wd) {
+  const p = S.promotores.find(x => x.id === pid) || {}; const R = regrasPass();
+  const lojas = lojasDoDiaWd(pid, wd);
+  const pts = []; const avisos = new Set();
+  if (p.casa && p.casa.lat != null) pts.push({ ll: [+p.casa.lat, +p.casa.lng], cid: p.cidadeRes, nome: 'casa' }); else avisos.add('casa sem localização');
+  lojas.forEach(l => { const pt = pontoLoja(l); if (pt) pts.push({ ll: pt, cid: l.municipio || l.cidade, nome: l.nome }); else avisos.add(`${l.nome} sem localização`); });
+  if (p.casa && p.casa.lat != null && lojas.length) pts.push(pts[0]);
+  let km = 0, pass = 0, valor = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const t = await trajeto(pts[i - 1].ll, pts[i].ll); km += t.km;
+    if (t.km > R.aPe) { pass++; const v = tarifaTrecho(R, pts[i - 1].cid, pts[i].cid); if (v == null) avisos.add(`sem tarifa ${semAc(pts[i - 1].cid)}${semAc(pts[i - 1].cid) !== semAc(pts[i].cid) ? ' ↔ ' + semAc(pts[i].cid) : ''}`); else valor += +v; }
+  }
+  return { lojas, km, pass, valor, avisos: [...avisos] };
+}
 async function pdfRotas(ids) {
   const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
+  toast('Calculando distâncias e passagens… pode levar alguns segundos.', 8000);
   const logo = await carregaImg(LOGO).catch(() => null);
-  const d = new J({ unit: 'mm', format: 'a4' }); const W = 210;
-  const topo = (nome, sub) => {
-    d.setFillColor(23, 25, 37); d.rect(0, 0, W, 26, 'F'); d.setFillColor(244, 188, 28); d.rect(0, 26, W, 1.4, 'F');
-    if (logo) try { d.addImage(logo, 'PNG', 12, 6.5, 66, 12.6); } catch (e) {}
-    d.setTextColor(255, 255, 255); d.setFontSize(8.5); d.setFont(undefined, 'normal'); d.text('ROTA DO PROMOTOR', W - 12, 11, { align: 'right' });
-    d.setFontSize(12); d.setFont(undefined, 'bold'); d.text(nome, W - 12, 18.5, { align: 'right' });
-    d.setTextColor(92, 96, 112); d.setFontSize(8); d.setFont(undefined, 'normal'); d.text(sub, 12, 33);
-  };
-  const ord = [1, 2, 3, 4, 5, 6, 0];
-  ids.forEach((pid, k) => {
-    if (k) d.addPage();
-    const nome = promNome(pid); const dias = ord.filter(x => lojasDoDiaWd(pid, x).length);
-    const total = new Set(dias.flatMap(x => lojasDoDiaWd(pid, x).map(l => l.id))).size;
-    topo(nome, `${total} clientes · ${dias.map(x => DIAS[x]).join(', ')} · gerado em ${new Date().toLocaleDateString('pt-BR')} ${hm(Date.now())}`);
-    let y = 38;
-    dias.forEach(x => {
-      const ls = lojasDoDiaWd(pid, x);
-      if (y > 255) { d.addPage(); topo(nome, '(continuação)'); y = 38; }
-      d.setTextColor(23, 25, 37); d.setFontSize(11); d.setFont(undefined, 'bold'); d.text(`${DIAS_LONGO[x].replace(/^./, c => c.toUpperCase())} · ${ls.length} ${ls.length === 1 ? 'cliente' : 'clientes'}`, 12, y + 4);
-      d.autoTable({ startY: y + 6, margin: { left: 12, right: 12, top: 32 }, head: [['#', 'Cód.', 'Cliente', 'Endereço', 'Bairro / cidade']],
-        body: ls.map((l, i) => [i + 1, l.codigo || '', l.nome || '', l.endereco || '', [l.bairro, l.municipio].filter(Boolean).join(' · ')]),
-        styles: { fontSize: 8.4, cellPadding: 1.6, textColor: [23, 25, 37] }, headStyles: { fillColor: [244, 188, 28], textColor: [23, 25, 37], fontStyle: 'bold' },
-        columnStyles: { 0: { cellWidth: 7, halign: 'center' }, 1: { cellWidth: 13 }, 2: { cellWidth: 52 }, 3: { cellWidth: 62 } }, alternateRowStyles: { fillColor: [246, 247, 249] },
-        didDrawPage: () => {} });
-      y = d.lastAutoTable.finalY + 6;
+  const d = new J({ unit: 'mm', format: 'a4', orientation: 'landscape' }); const W = 297, H = 210, M = 10;
+  const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',');
+  const kmf = v => v.toFixed(1).replace('.', ',') + ' km';
+  const agora = new Date(); const mesNome = agora.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const diasNoMes = wd => { const y = agora.getFullYear(), m = agora.getMonth(); let n = 0; for (let x = 1; x <= new Date(y, m + 1, 0).getDate(); x++) if (new Date(y, m, x).getDay() === wd) n++; return n; };
+  const R = regrasPass();
+  for (let k = 0; k < ids.length; k++) {
+    const pid = ids[k]; if (k) d.addPage();
+    const p = S.promotores.find(x => x.id === pid) || {};
+    const dias = [1, 2, 3, 4, 5, 6].concat(lojasDoDiaWd(pid, 0).length ? [0] : []);
+    const C = {}; for (const wd of dias) C[wd] = await custoDia(pid, wd);
+    // cabeçalho
+    d.setFillColor(23, 25, 37); d.rect(0, 0, W, 22, 'F'); d.setFillColor(244, 188, 28); d.rect(0, 22, W, 1.3, 'F');
+    if (logo) try { d.addImage(logo, 'PNG', M, 5.5, 58, 11.1); } catch (e) {}
+    d.setTextColor(255, 255, 255); d.setFont(undefined, 'bold'); d.setFontSize(15); d.text(p.nome || promNome(pid), W - M, 11, { align: 'right' });
+    d.setFont(undefined, 'normal'); d.setFontSize(8); d.setTextColor(210, 212, 220);
+    d.text(`ROTA DA SEMANA · casa: ${[p.endereco ? String(p.endereco).split(',').slice(0, 1)[0] : '', p.cidadeRes].filter(Boolean).join(' · ') || 'sem endereço'}`, W - M, 17, { align: 'right' });
+    // colunas
+    const top = 28, n = dias.length, gap = 2.5, cw = (W - 2 * M - gap * (n - 1)) / n, rodape = 37, area = H - top - rodape - 6;
+    const maxL = Math.max(1, ...dias.map(wd => C[wd].lojas.length)); const ch = Math.min(17, (area - 9) / maxL);
+    dias.forEach((wd, j) => {
+      const x = M + j * (cw + gap), c = C[wd];
+      d.setFillColor(244, 188, 28); d.roundedRect(x, top, cw, 8, 1.5, 1.5, 'F');
+      d.setTextColor(23, 25, 37); d.setFont(undefined, 'bold'); d.setFontSize(9.5); d.text(DIAS_LONGO[wd].toUpperCase(), x + cw / 2, top + 5.4, { align: 'center' });
+      d.setDrawColor(225, 227, 233); d.setLineWidth(0.25); d.roundedRect(x, top + 9, cw, area - 9, 1.5, 1.5, 'S');
+      if (!c.lojas.length) { d.setTextColor(150, 152, 165); d.setFont(undefined, 'normal'); d.setFontSize(8.5); d.text('Sem rota', x + cw / 2, top + 20, { align: 'center' }); }
+      c.lojas.forEach((l, i) => {
+        const y = top + 10 + i * ch;
+        if (i % 2) { d.setFillColor(247, 248, 250); d.rect(x + 0.4, y - 0.6, cw - 0.8, ch, 'F'); }
+        d.setFillColor(23, 25, 37); d.circle(x + 4, y + 3.4, 2.4, 'F'); d.setTextColor(255, 255, 255); d.setFont(undefined, 'bold'); d.setFontSize(7.5); d.text(String(i + 1), x + 4, y + 4.4, { align: 'center' });
+        d.setTextColor(23, 25, 37); d.setFontSize(8); const nm = d.splitTextToSize(`${l.nome}${l.codigo ? ' · ' + l.codigo : ''}`, cw - 9).slice(0, 2); d.text(nm, x + 8, y + 3);
+        d.setFont(undefined, 'normal'); d.setFontSize(6.6); d.setTextColor(100, 104, 120);
+        const lug = d.splitTextToSize([l.bairro, l.municipio].filter(Boolean).join(' · '), cw - 9).slice(0, 1); d.text(lug, x + 8, y + 3 + nm.length * 3.3);
+      });
+      // totais do dia
+      const yb = top + area + 1.5;
+      d.setFillColor(241, 242, 245); d.roundedRect(x, yb, cw, 13, 1.5, 1.5, 'F');
+      d.setTextColor(23, 25, 37); d.setFont(undefined, 'bold'); d.setFontSize(8.5);
+      d.text(c.lojas.length ? kmf(c.km) : '—', x + cw / 2, yb + 4.8, { align: 'center' });
+      d.setFont(undefined, 'normal'); d.setFontSize(7.4); d.setTextColor(70, 74, 90);
+      d.text(c.lojas.length ? `${c.pass} ${c.pass === 1 ? 'passagem' : 'passagens'} · ${brl(c.valor)}` : '', x + cw / 2, yb + 9.6, { align: 'center' });
     });
-  });
-  const n = d.getNumberOfPages(); for (let i = 1; i <= n; i++) { d.setPage(i); d.setFontSize(7.5); d.setTextColor(120, 124, 140); d.text(`Nova Penedo Distribuidora · página ${i} de ${n}`, W / 2, 290, { align: 'center' }); }
+    // resumo
+    const sem = dias.reduce((t, wd) => ({ km: t.km + C[wd].km, pass: t.pass + C[wd].pass, valor: t.valor + C[wd].valor, lojas: t.lojas + C[wd].lojas.length }), { km: 0, pass: 0, valor: 0, lojas: 0 });
+    const mes = dias.reduce((t, wd) => ({ dias: t.dias + (C[wd].lojas.length ? diasNoMes(wd) : 0), km: t.km + C[wd].km * diasNoMes(wd), pass: t.pass + C[wd].pass * diasNoMes(wd), valor: t.valor + C[wd].valor * diasNoMes(wd) }), { dias: 0, km: 0, pass: 0, valor: 0 });
+    const ys = H - rodape + 4; const bw = (W - 2 * M - 3 * 4) / 4;
+    [['VISITAS NA SEMANA', String(sem.lojas)], ['DISTÂNCIA NA SEMANA', kmf(sem.km)], ['PASSAGENS NA SEMANA', `${sem.pass} · ${brl(sem.valor)}`], [`ESTIMATIVA ${mesNome.toUpperCase()}`, `${mes.pass} pass. · ${brl(mes.valor)}`]].forEach(([t, v], j) => {
+      const x = M + j * (bw + 4); const dest = j === 3;
+      d.setFillColor(...(dest ? [244, 188, 28] : [23, 25, 37])); d.roundedRect(x, ys, bw, 15, 2, 2, 'F');
+      d.setTextColor(...(dest ? [23, 25, 37] : [200, 203, 212])); d.setFont(undefined, 'normal'); d.setFontSize(7); d.text(t, x + 4, ys + 5);
+      d.setTextColor(...(dest ? [23, 25, 37] : [255, 255, 255])); d.setFont(undefined, 'bold'); d.setFontSize(12); d.text(v, x + 4, ys + 11.8);
+    });
+    const avisos = [...new Set(dias.flatMap(wd => C[wd].avisos))];
+    const tarifasUsadas = [...new Set(dias.flatMap(wd => [p.cidadeRes, ...C[wd].lojas.map(l => l.municipio)]).map(semAc).filter(Boolean))].map(c => `${c.charAt(0) + c.slice(1).toLowerCase()} ${R.tarifas[c] != null ? brl(+R.tarifas[c]) : '(sem tarifa)'}`);
+    d.setFont(undefined, 'normal'); d.setFontSize(6.6); d.setTextColor(110, 114, 128);
+    const nota = `Distância de carro pelas ruas (OpenStreetMap), saindo de casa, passando pelas lojas na ordem e voltando para casa. 1 passagem por trecho acima de ${String(R.aPe).replace('.', ',')} km (mais perto: a pé). Tarifas: ${tarifasUsadas.join(' · ')}${Object.keys(R.inter).length ? ' · entre cidades: ' + Object.entries(R.inter).map(([k, v]) => k.split('|').map(c => c.charAt(0) + c.slice(1).toLowerCase()).join(' ↔ ') + ' ' + brl(+v)).join(' · ') : ''}. Estimativa do mês: dias de rota de ${mesNome}.${avisos.length ? ' Atenção: ' + avisos.join('; ') + '.' : ''}`;
+    d.text(d.splitTextToSize(nota, W - 2 * M - 40), M, H - 8.5);
+    d.text(`Gerado em ${agora.toLocaleDateString('pt-BR')} ${hm(Date.now())}`, W - M, H - 4, { align: 'right' });
+  }
   d.save(`Rota${ids.length === 1 ? ' ' + promNome(ids[0]).split(' ')[0] : 's ' + ids.length + ' promotores'} ${ymd(new Date())}.pdf`);
 }
 // Copia a rota de um dia (na mesma ordem) para outros dias do mesmo promotor
@@ -1245,6 +1301,10 @@ function renderConfig() {
       <details><summary style="cursor:pointer;font-weight:600">Verificador automático (quem não começou a rota)</summary>
         <p class="muted" style="font-size:13px">Roda sozinho às 08:35 e 09:35 (seg a sáb) no GitHub e avisa no canal quem tem rota e ainda não fez check-in. Precisa de um acesso só de leitura, criado aqui.</p>
         <div class="row"><button class="btn" id="nt-ver">${S.empresa.verificador ? 'Gerar nova senha do verificador' : 'Criar acesso do verificador'}</button></div><div id="nt-ver-r"></div></details></div>
+    <div class="card stack"><h3>Passagens (custo de deslocamento)</h3><p class="muted" style="margin:0;font-size:14px">Usadas no PDF da rota. Uma linha por cidade (<b>CIDADE = valor</b>) e por trajeto entre cidades (<b>CIDADE A x CIDADE B = valor</b>).</p>
+      <textarea id="cf-pass" rows="6">${h([...Object.entries(regrasPass().tarifas).map(([c, v]) => `${c} = ${String(v).replace('.', ',')}`), ...Object.entries(regrasPass().inter).map(([k, v]) => `${k.replace('|', ' x ')} = ${String(v).replace('.', ',')}`)].join('\n'))}</textarea>
+      <label class="field"><span>Até quantos km o promotor vai a pé (sem passagem)</span><input type="number" id="cf-ape" min="0" step="0.1" value="${regrasPass().aPe}"></label>
+      <div><button class="btn primary" id="cf-pass-s">Salvar passagens</button></div></div>
     <div class="card stack"><h3>Dados da empresa nos termos</h3><p class="muted" style="margin:0;font-size:14px">Aparecem nos termos de LGPD e do aparelho que o promotor assina no primeiro acesso.</p>
       <label class="field"><span>Razão social</span><input type="text" id="cf-emp" value="${h(S.empresa.empresa || 'Nova Penedo Distribuidora')}"></label>
       <label class="field"><span>CNPJ</span><input type="text" id="cf-cnpj" value="${h(S.empresa.cnpj || '')}"></label>
@@ -1281,6 +1341,12 @@ function renderConfig() {
     document.querySelectorAll('[data-cg]').forEach(i => { const m = i.value.trim().match(/^(\d{1,2})(?:[:h](\d{1,2}))?$/); if (!m) erro = true; else carga[i.dataset.cg] = +m[1] * 60 + (+m[2] || 0); });
     if (erro) return toast('Use o formato 8:00 nas cargas.');
     setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60), inicioPrevisto: $('#cf-inip').value || '08:00', tolerancia: +$('#cf-tol').value || 30, almocoMinimo: +$('#cf-almmin').value || 0 } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
+  };
+  $('#cf-pass-s').onclick = () => {
+    const tarifas = {}, inter = {}; let erro = '';
+    $('#cf-pass').value.split('\n').map(x => x.trim()).filter(Boolean).forEach(ln => { const m = ln.match(/^(.+?)\s*=\s*R?\$?\s*([\d.,]+)$/); if (!m) { erro = ln; return; } const v = +m[2].replace(/\./g, '').replace(',', '.'); const cs = m[1].split(/\s+x\s+/i).map(semAc); if (cs.length === 2) inter[cs.sort().join('|')] = v; else tarifas[cs[0]] = v; });
+    if (erro) return toast('Não entendi a linha: ' + erro, 6000);
+    updateDoc(doc(db, 'config', 'app'), { passagens: { tarifas, inter, aPe: +$('#cf-ape').value || 0 } }).then(() => toast('Passagens salvas'), e => toast(erroMsg(e)));
   };
   $('#cf-emp-s').onclick = () => setDoc(doc(db, 'config', 'app'), { empresa: $('#cf-emp').value.trim(), cnpj: $('#cf-cnpj').value.trim(), contato: $('#cf-cont').value.trim() }, { merge: true }).then(() => toast('Dados da empresa salvos'), e => toast(erroMsg(e)));
   $('#cf-arq').onchange = e => { const f = e.target.files[0]; if (f) importar(f); };
