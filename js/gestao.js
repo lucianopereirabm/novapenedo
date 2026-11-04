@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.8';
+const VERSAO_GESTAO = '2026-11-04.9';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -137,7 +137,7 @@ function verificaInicio() {
   const R = regrasJornada(S.empresa); const [hh, mm] = String(R.inicioPrevisto).split(':').map(Number);
   const limite = new Date(); limite.setHours(Number.isFinite(hh) ? hh : 8, (mm || 0) + R.tolerancia, 0, 0); if (Date.now() < limite.getTime()) return;
   const wd = new Date().getDay();
-  S.promotores.filter(p => p.ativo !== false && lojasDoDiaWd(p.id, wd).length).forEach(p => {
+  S.promotores.filter(p => p.ativo !== false && !emTeste(p.id, ymd(new Date())) && lojasDoDiaWd(p.id, wd).length).forEach(p => {
     if (Object.values(AL.vis).some(v => v.promotorId === p.id)) return;
     notifica('ini-' + p.id, `⏰ ${p.nome.split(' ')[0]} ainda não começou a rota`, `Sem check-in até ${hm(Date.now())} (início previsto ${R.inicioPrevisto}). ${(n => n + (n === 1 ? ' loja' : ' lojas'))(lojasDoDiaWd(p.id, wd).length)} na rota de hoje.`);
   });
@@ -176,7 +176,8 @@ function diaDoPromotor(pid) {
     if (!J.tem && !vs.length && agoraMs > limite.getTime()) atencao = `Sem check-in até agora (início previsto ${R.inicioPrevisto})`;
     else if (pend && !agora && !J.almocoAberto && ultimaAcao && agoraMs - ultimaAcao > R.tolerancia * 60000) atencao = `Sem check-in há ${hmin((agoraMs - ultimaAcao) / 60000)} desde a última loja`;
   }
-  J.atencao = atencao;
+  if (emTeste(pid, P.data)) atencao = ''; // em teste: sem alerta amarelo
+  J.atencao = atencao; J.teste = emTeste(pid, P.data);
   return { J, pid, paradas, programadas: lojas.length, feitas, extras, nao, agora, primeira: ents.length ? Math.min(...ents) : null, ultimaSaida: sais.length ? Math.max(...sais) : null, ultima, tempo, alertas };
 }
 const nomeCurto = id => { const w = promNome(id).split(' ').filter(x => x && !['da', 'de', 'do', 'das', 'dos', 'e'].includes(x.toLowerCase())); return w.length > 1 ? w[0] + ' ' + w[w.length - 1] : w[0] || ''; };
@@ -239,7 +240,7 @@ function renderPainel() {
   $('#p-cards').innerHTML = dias.map(d => {
     const pct = d.programadas ? Math.round(d.feitas / d.programadas * 100) : 0;
     return `<button class="tcard ${d.J.atencao ? 'atencao' : ''}" data-p="${h(d.pid)}">${d.J.atencao ? `<div class="aviso-at">⚠ ${h(d.J.atencao)}</div>` : ''}
-      <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b><div class="st">${statusTexto(d)}</div></div>
+      <div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(d.pid)}<div style="min-width:0;flex:1"><b class="nm">${h(nomeCurto(d.pid))}</b>${d.J.teste ? ' <span class="tag y" title="Antes da data de início do app na ficha: não conta banco de horas, faltas nem rota">em teste</span>' : ''}<div class="st">${statusTexto(d)}</div></div>
         <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
       ${estrada(d)}
       <div class="ultimo">${ultimoEvento(d)}</div>
@@ -277,6 +278,9 @@ function jornadaTxt(J) {
 }
 /* ---------- visão do mês: visitas e banco de horas ---------- */
 const inicioControle = () => S.empresa.inicioControle || '2026-10-30'; // antes disso não havia app: não conta falta
+// início do controle de cada promotor: a data dele (ficha) ou, sem data, a geral. Antes disso é teste.
+const inicioDe = pid => { const p = S.promotores.find(x => x.id === pid); const g = inicioControle(); return p && p.inicioApp && p.inicioApp > g ? p.inicioApp : g; };
+const emTeste = (pid, d) => d < inicioDe(pid);
 function diasDoMes(mes) { const [y, m] = mes.split('-').map(Number); const n = new Date(y, m, 0).getDate(); const hoje = ymd(new Date()); const ini = inicioControle(); return Array.from({ length: n }, (_, i) => `${mes}-${String(i + 1).padStart(2, '0')}`).filter(d => d <= hoje && d >= ini); }
 async function carregaMes(mes) {
   if (P.dadosMes[mes] && P.dadosMes[mes].ok) return P.dadosMes[mes];
@@ -297,6 +301,7 @@ function resumoMes(D, mes) {
   return [...ids].map(pid => {
     const R = { pid, dias: [], trab: 0, prev: 0, saldo: 0, diasTrab: 0, faltas: 0, prog: 0, feitas: 0, nao: 0, semVisita: 0, fora: 0, alertas: 0, andamento: null };
     diasDoMes(mes).forEach(d => {
+      if (emTeste(pid, d)) return; // período de teste: não entra no banco de horas, faltas e rotas
       const lojas = lojasDoDia(pid, d); const m = D.vis[d] || {};
       const vs = Object.entries(m).filter(([, v]) => v.promotorId === pid);
       const naRota = new Set(lojas.map(l => l.id + '_' + pid));
@@ -917,7 +922,7 @@ function renderEquipe() {
     <div class="note">O promotor entra no app <b>pelo rosto</b>. Para colocar o app num celular, clique em <b>Ativar celular</b> e aponte a câmera do celular para o QR. Login e senha ficam só com a gestão. Endereço do app: <b>${h(location.origin + location.pathname.replace(/gestao\.html$/, ''))}</b></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Promotor</th><th>Contato</th><th>Lojas</th><th>Login</th><th>Senha</th><th>Termos</th><th></th></tr></thead><tbody>
     ${lista.length ? '' : `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">Nenhum promotor ${filtro === 'inativos' ? 'inativo' : 'ativo'}.</td></tr>`}
-    ${lista.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}</div></td>
+    ${lista.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}${p.inicioApp ? ` · ${p.inicioApp > ymd(new Date()) ? '<span class="tag y">em teste</span> app a partir de' : 'app desde'} ${dataBR(p.inicioApp)}` : ''}</div></td>
       <td style="font-size:13px;white-space:normal;min-width:240px">${p.telefone ? `📞 ${h(p.telefone)}` : '<span class="muted">sem telefone</span>'}${p.email ? `<div class="muted">✉ ${h(p.email)}</div>` : ''}${p.endereco || p.cidadeRes ? `<div class="muted">🏠 ${h([p.endereco, [p.cidadeRes, p.ufRes].filter(Boolean).join('/'), p.cepRes].filter(Boolean).join(' · '))}</div>` : '<div class="muted">sem endereço</div>'}</td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
       <td class="r"><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">${a ? celularCel(p) : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
@@ -952,6 +957,7 @@ function editaPromotor(p) {
     <div class="muted" style="font-size:12px">${p.casa ? `📍 Casa localizada no mapa (${p.casa.nivel === 'rua' ? 'pela rua' : 'aproximada pelo bairro/cidade'}).` : 'A casa é localizada no mapa automaticamente ao salvar.'}</div>
     <label class="field"><span>Telefone</span><input type="tel" name="telefone" value="${h(p.telefone || '')}"></label>
     <label class="field"><span>E-mail</span><input type="email" name="email" value="${h(p.email || '')}"></label>
+    <label class="field"><span>Início do uso do app (antes desta data é só teste: não conta banco de horas, faltas nem rota)</span><input type="date" name="inicioApp" value="${h(p.inicioApp || '')}"></label>
     <label class="field"><span>Situação</span><select name="ativo"><option value="1" ${p.ativo !== false ? 'selected' : ''}>Ativo</option><option value="" ${p.ativo === false ? 'selected' : ''}>Inativo (não aparece nas rotas e não entra no app)</option></select></label>
     ${!novo ? `<div class="note ${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? 'ok' : 'warn'}" style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<span>Termos LGPD e do aparelho assinados em ${new Date(S.termos[p.id].assinadoEm).toLocaleString('pt-BR')}</span><span class="row" style="gap:6px"><button type="button" class="btn sm" id="ep-tpdf">Baixar PDF</button><button type="button" class="btn sm ghost danger" id="ep-tre">Pedir nova assinatura</button></span>` : '<span>Termos ainda não assinados. O app pede a assinatura no primeiro acesso do promotor.</span>'}</div>` : ''}
     <div id="ep-msg"></div>
@@ -973,7 +979,7 @@ function editaPromotor(p) {
   };
   $('#ep').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
-    const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), atualizado: Date.now(),
+    const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), inicioApp: String(f.get('inicioApp') || ''), atualizado: Date.now(),
       endereco: String(f.get('endereco') || '').trim(), cidadeRes: String(f.get('cidadeRes') || '').trim(), ufRes: String(f.get('ufRes') || '').trim().toUpperCase(), cepRes: String(f.get('cepRes') || '').trim() };
     const mudouCasa = novo || v.endereco !== (p.endereco || '') || v.cidadeRes !== (p.cidadeRes || '') || v.cepRes !== (p.cepRes || '');
     const usuario = semAcento(String(f.get('usuario') || '').trim()).replace(/\s+/g, '');

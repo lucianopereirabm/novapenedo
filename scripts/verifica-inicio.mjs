@@ -41,9 +41,9 @@ if (!nt.topico) { console.log('Canal ntfy não criado na Gestão.'); process.exi
 if (nt.inicio === false && !FORCAR) { console.log('Alerta "não começou" desligado na Gestão.'); process.exit(0); }
 
 const [promotores, lojas, visitas] = await Promise.all([
-  lista('promotores', ['nome', 'ativo']), lista('lojas', ['promotorId', 'dias']), lista(`dias/${hoje}/visitas`, ['promotorId'])
+  lista('promotores', ['nome', 'ativo', 'inicioApp']), lista('lojas', ['promotorId', 'dias']), lista(`dias/${hoje}/visitas`, ['promotorId'])
 ]);
-const comRota = promotores.filter(p => p.ativo !== false).map(p => ({ ...p, n: lojas.filter(l => l.promotorId === p.id && (l.dias || []).map(Number).includes(wd)).length })).filter(p => p.n);
+const comRota = promotores.filter(p => p.ativo !== false && !(p.inicioApp && p.inicioApp > hoje)) // em teste: não avisa.map(p => ({ ...p, n: lojas.filter(l => l.promotorId === p.id && (l.dias || []).map(Number).includes(wd)).length })).filter(p => p.n);
 const comecou = new Set(visitas.map(v => v.promotorId));
 const falta = comRota.filter(p => !comecou.has(p.id));
 console.log(`${hoje} ${hora} · com rota: ${comRota.length} · sem registro: ${falta.map(p => p.nome).join(', ') || 'ninguém'}`);
