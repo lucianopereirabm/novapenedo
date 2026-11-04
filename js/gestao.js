@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.7';
+const VERSAO_GESTAO = '2026-11-04.8';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -630,7 +630,7 @@ function renderMontar() {
   if (!M.pid) { box.innerHTML = '<div class="empty"><b>Escolha o promotor</b>Depois escolha o dia e adicione os clientes na ordem de atendimento.</div>'; $('#m-res').innerHTML = ''; return; }
   const lista = lojasDoDiaWd(M.pid, M.wd);
   box.innerHTML = `<div class="spread"><h3>Rota de ${DIAS_LONGO[M.wd]} · ${h(prim(M.pid))}</h3><span class="muted num">${lista.length} cliente${lista.length === 1 ? '' : 's'}</span></div>` +
-    (lista.length ? lista.map((l, i) => `<div class="ritem"><span class="n num">${i + 1}</span><span class="t"><b>${h(l.nome)}</b><span>${cod(l)}${h(l.bairro || '')}${l.lat == null ? ' · <span class="tag y">sem local</span>' : ''}</span></span>
+    (lista.length ? lista.map((l, i) => `<div class="ritem"><span class="n num">${i + 1}</span><span class="t"><b>${h(l.nome)}</b><span>${cod(l)}${l.endereco ? h(l.endereco) + ' · ' : ''}${h(l.bairro || '')}${l.lat == null ? ' · <span class="tag y">sem local</span>' : ''}</span></span>
       <span class="row" style="gap:2px"><button class="ib" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Subir">↑</button><button class="ib" data-dn="${i}" ${i === lista.length - 1 ? 'disabled' : ''} aria-label="Descer">↓</button><button class="ib x" data-rm="${i}" aria-label="Tirar">×</button></span></div>`).join('')
       : `<div class="empty"><b>Nenhum cliente na ${DIAS_LONGO[M.wd]}</b>Busque ao lado e clique em Adicionar, na ordem de atendimento.</div>`);
   box.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { const i = +b.dataset.up; const a = lista.slice();[a[i - 1], a[i]] = [a[i], a[i - 1]]; renumera(a); });
@@ -645,7 +645,7 @@ function renderMontar() {
 function renderBusca() {
   const r = $('#m-res'); if (!r || !M.pid) return;
   const q = semAcento($('#m-busca').value.trim());
-  let itens = q ? S.lojas.filter(l => { const t = semAcento([l.codigo, l.nome, l.razao, l.bairro, l.municipio, l.praca, promNome(l.promotorId)].join(' ')); return q.split(/\s+/).every(x => t.includes(x)); })
+  let itens = q ? S.lojas.filter(l => { const t = semAcento([l.codigo, l.nome, l.razao, l.endereco, l.bairro, l.municipio, l.praca, promNome(l.promotorId)].join(' ')); return q.split(/\s+/).every(x => t.includes(x)); })
     : S.lojas.filter(l => l.promotorId === M.pid && !(l.dias || []).map(Number).includes(M.wd));
   itens.sort((a, b) => (a.promotorId === M.pid ? 0 : 1) - (b.promotorId === M.pid ? 0 : 1) || a.nome.localeCompare(b.nome));
   if (!itens.length) { r.innerHTML = `<div class="muted" style="font-size:14px">${q ? 'Nenhum cliente encontrado.' : 'Todos os clientes deste promotor já estão neste dia. Busque para trazer outros.'}</div>`; return; }
@@ -653,7 +653,7 @@ function renderBusca() {
     const naRota = l.promotorId === M.pid && (l.dias || []).map(Number).includes(M.wd);
     const outro = l.promotorId && l.promotorId !== M.pid;
     const dias = [1, 2, 3, 4, 5, 6, 0].filter(d => (l.dias || []).map(Number).includes(d)).map(d => DIAS[d]).join(' ');
-    return `<div class="res"><div class="t"><b>${h(l.nome)}</b><div>${cod(l)}${h(l.bairro || '')}, ${h(l.municipio || '')}</div>
+    return `<div class="res"><div class="t"><b>${h(l.nome)}</b><div>${cod(l)}${l.endereco ? h(l.endereco) + ' · ' : ''}${h(l.bairro || '')}, ${h(l.municipio || '')}</div>
       <div class="row" style="gap:6px;margin-top:3px">${outro ? `<span class="tag">${h(prim(l.promotorId))}</span>` : ''}${dias ? `<span class="tag">${dias}</span>` : '<span class="tag">sem dia</span>'}${l.bloqueado ? '<span class="tag no">bloqueado</span>' : ''}</div></div>
       ${naRota ? '<span class="tag y">Na rota</span>' : `<button class="btn sm ${outro ? '' : 'primary'}" data-add="${h(l.id)}">Adicionar</button>`}</div>`;
   }).join('') + (itens.length > 60 ? `<div class="muted" style="font-size:13px;padding-top:8px">Mostrando 60 de ${itens.length}. Refine a busca.</div>` : '');
