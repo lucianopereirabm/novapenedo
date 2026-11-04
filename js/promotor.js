@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-04.2';
+export const VERSAO_APP = '2026-11-04.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -442,7 +442,7 @@ function renderVisita() {
     $('#v-detalhes').hidden = true; return;
   }
   st.innerHTML = `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout || Date.now())}</b></div></div>
-    ${v.distIn != null ? `<div class="note ${v.distIn > S.raio ? 'warn' : 'ok'}">Check-in a ${v.distIn} m da loja (precisão do GPS ${v.gpsIn ? v.gpsIn.prec : '?'} m).</div>` : ''}`;
+    ${v.distIn != null ? (v.distIn > (v.raio || S.raio) ? `<div class="note crit"><b>⚠️ Check-in fora da loja</b> · a ${v.distIn >= 1000 ? (v.distIn / 1000).toFixed(1).replace('.', ',') + ' km' : v.distIn + ' m'} da loja (o certo é até ${v.raio || S.raio} m). A gestão foi avisada.</div>` : `<div class="note ok">Check-in a ${v.distIn} m da loja (precisão do GPS ${v.gpsIn ? v.gpsIn.prec : '?'} m).</div>`) : ''}`;
   $('#v-detalhes').hidden = false; renderFotos(); renderCheck(v); renderPesquisa(v);
   if (document.activeElement !== $('#v-obs')) $('#v-obs').value = v.obs || '';
   $('#v-saida').innerHTML = v.status === 'em_loja' ? `<button class="btn primary big" id="b-out">Fazer check-out</button>` : `<div class="note ok">Visita concluída às ${hm(v.checkout)}.</div>`;
@@ -463,17 +463,12 @@ async function checkin() {
   if (V.loja.lat != null) {
     dist = Math.round(distancia(gps, { lat: +V.loja.lat, lng: +V.loja.lng }));
     if (dist > S.raio) {
-      const trava = !!(S.cfgApp && S.cfgApp.travaRaio);
-      const longe = dist >= 1000 ? (dist / 1000).toFixed(1).replace('.', ',') + ' km' : dist + ' m';
-      try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
-      const esc = await new Promise(res => {
-        abreModal(`<h3 style="color:var(--crit)">⚠️ Check-in fora do cliente</h3><p>O GPS indica que você está a <b>${longe}</b> da loja <b>${h(V.loja.nome)}</b>. O check-in deve ser feito até <b>${S.raio} m</b> da loja.</p>
-          <p class="muted" style="font-size:13px">Precisão do GPS agora: ${gps.prec} m. Se você já está na porta da loja, vá para um lugar aberto, espere alguns segundos e tente de novo.${trava ? '' : ' Se fizer o check-in assim mesmo, a visita vai para a gestão com <b>alerta de fora do cliente</b>.'}</p>
-          <div class="row end">${trava ? '' : '<button class="btn" id="lg-f">Fazer check-in assim mesmo</button>'}<button class="btn primary" id="lg-ok">Tentar de novo</button></div>`);
-        $('#lg-ok').onclick = () => { fechaModal(); res('t'); }; const f = $('#lg-f'); if (f) f.onclick = () => { fechaModal(); res('f'); };
-      });
-      if (esc !== 'f') { b.disabled = false; b.firstChild.textContent = 'Fazer check-in'; return; }
-      V.foraRaio = true;
+      if (S.cfgApp && S.cfgApp.travaRaio) { // bloqueio ligado na Gestão
+        b.disabled = false; b.firstChild.textContent = 'Fazer check-in';
+        abreModal(`<h3 style="color:var(--crit)">⚠️ Check-in fora da loja</h3><p>Você está a <b>${dist >= 1000 ? (dist / 1000).toFixed(1).replace('.', ',') + ' km' : dist + ' m'}</b> da loja. O check-in só é liberado até ${S.raio} m.</p><div class="row end"><button class="btn primary" id="lg-ok">Entendi</button></div>`);
+        $('#lg-ok').onclick = fechaModal; return;
+      }
+      V.foraRaio = true; // liberado: segue o check-in e avisa o promotor; a gestão vê o alerta
     }
   }
   let cv = null, rosto = null;
@@ -501,6 +496,7 @@ async function checkin() {
   grava(setDoc(doc(db, 'dias', S.hoje, 'visitas', V.id), visita));
   if (S.jor && S.jor.almocoInicio && !S.jor.almocoFim) fimAlmoco(foto.ts, gps); // chegou na loja: fim do almoço
   grava(setDoc(doc(db, 'dias', S.hoje, 'fotos', V.id), { visita: V.id, imgs: [foto] }), true);
+  if (V.foraRaio) { try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {} }
   proximoPasso();
 }
 async function checkout() {

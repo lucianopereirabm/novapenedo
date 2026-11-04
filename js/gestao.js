@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.3';
+const VERSAO_GESTAO = '2026-11-04.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -210,7 +210,7 @@ function ultimoEvento(d) {
   const ev = [];
   d.paradas.forEach(x => { const v = x.v; if (!v) return; const n = `${x.extra ? '' : x.ordem + 'ª · '}${h(x.nome)}`;
     if (v.status === 'nao_visitada') ev.push({ t: v.registrado || 0, html: `<span class="ic-ev no">✕</span> Não visitou <b>${n}</b> · ${h(v.motivo || '')} · ${hm(v.registrado)}` });
-    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${v.distIn != null && v.distIn > S.raio ? ` · <span style="color:var(--crit)">${v.distIn} m</span>` : ''}` });
+    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${v.distIn != null && v.distIn > S.raio ? ` · <span style="color:var(--crit)">⚠️ fora da loja (${v.distIn} m)</span>` : ''}` });
       if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
   const jr = (P.jor || {})[d.pid];
   if (jr && jr.almocoInicio) ev.push({ t: jr.almocoInicio, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Saiu para o almoço às ${hm(jr.almocoInicio)}` });
@@ -411,7 +411,7 @@ function renderDetalhe(d) {
   const linhas = d.paradas.map(x => {
     const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">Não visitada</span>` : '<span class="pill live">Em loja</span>';
     const al = !v || v.status === 'nao_visitada' ? (v ? `<span class="muted" style="font-size:12px">${h(v.motivo)}</span>` : '') :
-      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn} m</span>` : ''].join(' ');
+      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${v.distIn > S.raio ? 'no' : ''}">${v.distIn > S.raio ? '⚠️ fora da loja · ' : ''}${v.distIn} m</span>` : ''].join(' ');
     return `<tr class="${v ? 'click' : ''}" ${v ? `data-v="${h(x.id)}"` : ''}><td>${x.extra ? '+' : x.ordem}</td><td><b>${h(x.nome)}</b><div class="muted" style="font-size:12px">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</div></td>
       <td>${st}</td><td>${v && v.checkin ? hm(v.checkin) + '–' + (v.checkout ? hm(v.checkout) : '…') : '—'}</td><td>${v && v.checkin && v.checkout ? dur(v.checkin, v.checkout) : '—'}</td><td class="conf">${al}</td></tr>`;
   }).join('');
@@ -1054,7 +1054,7 @@ function renderConfig() {
     <div class="card stack"><h3>Checklist da visita</h3><p class="muted" style="margin:0;font-size:14px">Uma pergunta por linha.</p><textarea id="cf-check" rows="6">${h(S.checklist.join('\n'))}</textarea><div><button class="btn primary" id="cf-check-s">Salvar checklist</button></div></div>
     <div class="card stack"><h3>Check-in e variável</h3>
       <label class="field"><span>Raio do check-in (metros)</span><input type="number" id="cf-raio" min="30" step="10" value="${S.raio}"></label>
-      <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-trava" ${S.empresa && S.empresa.travaRaio ? 'checked' : ''}> Bloquear o check-in fora do raio (desligado = o app avisa e deixa fazer, com alerta na gestão)</label>
+      <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-trava" ${S.empresa && S.empresa.travaRaio ? 'checked' : ''}> Bloquear o check-in fora do raio (desligado = o check-in é feito, o promotor vê o aviso "Check-in fora da loja" e a gestão recebe o alerta)</label>
       <label class="field"><span>Variável da rota (R$)</span><input type="number" id="cf-base" step="10" value="${S.regras.base}"></label>
       <label class="field"><span>Faturamento mínimo da rota (R$)</span><input type="number" id="cf-meta" step="1000" value="${S.regras.meta}"></label>
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
