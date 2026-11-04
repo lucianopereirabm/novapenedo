@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.5';
+const VERSAO_GESTAO = '2026-11-04.6';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -56,13 +56,14 @@ function iniciar() {
   escuta(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
   document.querySelectorAll('.side-item').forEach(b => b.onclick = () => { S.tab = b.dataset.go; lsSet('np.g.tab', S.tab); mostra(); window.scrollTo(0, 0); });
   if (!secoes.includes(S.tab)) S.tab = 'painel';
-  mostra(); assinaPainel(); assinaVar();
+  mostra(); assinaPainel(); assinaVar(); iniciaAlertas();
   // a cada minuto: atualiza horários na tela e, se estiver vendo "hoje", vira o dia sozinho à meia-noite
   let hojeAntes = ymd(new Date());
   setInterval(() => {
     const hoje = ymd(new Date());
     if (hoje !== hojeAntes) { if (P.data === hojeAntes) { P.data = hoje; const i = $('#p-data'); if (i) i.value = hoje; assinaPainel(); } hojeAntes = hoje; }
     if (S.tab === 'painel') renderPainel();
+    iniciaAlertas(); verificaInicio();
   }, 60000);
 }
 function mostra() {
@@ -94,6 +95,54 @@ const vazioCarregando = () => !(S.pronto.p && S.pronto.l);
    MONITORAMENTO
    ========================================================= */
 const P = { modo: lsGet('np.p.modo') === 'mes' ? 'mes' : 'dia', mes: ymd(new Date()).slice(0, 7), dadosMes: {}, selMes: '', data: ymd(new Date()), vis: {}, unsub: null, mapa: null, camada: null, sel: '' };
+/* ---------- alertas no aparelho do gestor (com a Gestão aberta ou minimizada) ---------- */
+const AL = { on: lsGet('np.alertas') === '1', dia: null, unsub: null, vis: {}, pronto: false };
+const alVisto = k => { try { const x = JSON.parse(localStorage.getItem('np.al.' + AL.dia) || '{}'); return !!x[k]; } catch (e) { return false; } };
+const alMarca = k => { try { const key = 'np.al.' + AL.dia; const x = JSON.parse(localStorage.getItem(key) || '{}'); x[k] = 1; localStorage.setItem(key, JSON.stringify(x)); } catch (e) {} };
+async function notifica(chave, titulo, corpo) {
+  if (!AL.on || alVisto(chave)) return; alMarca(chave);
+  toast(titulo + ' · ' + corpo, 6000);
+  if (!window.Notification || Notification.permission !== 'granted') return;
+  const op = { body: corpo, icon: 'img/icon-192.png', badge: 'img/icon-192.png', tag: chave, vibrate: [200, 100, 200], data: { url: location.href } };
+  try { const r = await navigator.serviceWorker.getRegistration(); if (r) return r.showNotification(titulo, op); } catch (e) {}
+  try { new Notification(titulo, op); } catch (e) {}
+}
+async function ligaAlertas(ligar) {
+  if (!ligar) { AL.on = false; lsSet('np.alertas', ''); toast('Alertas desligados neste aparelho'); return; }
+  if (!window.Notification) return toast('Este navegador não mostra notificações. No celular, use o Chrome.', 6000);
+  const p = await Notification.requestPermission();
+  if (p !== 'granted') return toast('As notificações foram bloqueadas. Libere nas configurações do navegador para este site.', 7000);
+  AL.on = true; lsSet('np.alertas', '1'); iniciaAlertas();
+  Object.entries(AL.vis).forEach(([k, v]) => { if (v.checkin) alMarca('in-' + k); if (v.status === 'nao_visitada') alMarca('nv-' + k); }); // o que já aconteceu não avisa de novo
+  setTimeout(verificaInicio, 1500);
+  notifica('teste-' + Date.now(), '🔔 Alertas ligados', 'Você vai receber a chegada dos promotores nas lojas e quem não começou a rota. Deixe a Gestão aberta (pode minimizar).');
+}
+function iniciaAlertas() {
+  const hoje = ymd(new Date()); if (AL.dia === hoje && AL.unsub) return;
+  if (AL.unsub) AL.unsub(); AL.dia = hoje; AL.vis = {}; AL.pronto = false;
+  AL.unsub = onSnapshot(collection(db, 'dias', hoje, 'visitas'), s => {
+    const m = {}; s.docs.forEach(d => m[d.id] = d.data());
+    if (!AL.pronto) { Object.entries(m).forEach(([k, v]) => { if (v.checkin) alMarca('in-' + k); if (v.status === 'nao_visitada') alMarca('nv-' + k); }); AL.pronto = true; } // o que já estava feito ao abrir não avisa
+    else Object.entries(m).forEach(([k, v]) => {
+      const nome = prim(v.promotorId);
+      if (v.checkin) notifica('in-' + k, `📍 ${nome} chegou na loja`, `${v.lojaNome || 'Loja'} às ${hm(v.checkin)}${foraLoja(v) ? ` · ⚠️ fora da loja (${v.distIn} m)` : ''}${v.rostoOk === false ? ' · ⚠️ rosto não confere' : ''}`);
+      if (v.status === 'nao_visitada') notifica('nv-' + k, `🚫 ${nome} não visitou`, `${v.lojaNome || 'Loja'}: ${v.motivo || ''}`);
+    });
+    AL.vis = m; verificaInicio();
+  }, () => { AL.unsub = null; setTimeout(iniciaAlertas, 30000); });
+}
+// quem tem rota hoje e ainda não fez nenhum registro depois do início previsto + tolerância
+function verificaInicio() {
+  if (!AL.pronto || !S.promotores.length) return;
+  const R = regrasJornada(S.empresa); const [hh, mm] = String(R.inicioPrevisto).split(':').map(Number);
+  const limite = new Date(); limite.setHours(Number.isFinite(hh) ? hh : 8, (mm || 0) + R.tolerancia, 0, 0); if (Date.now() < limite.getTime()) return;
+  const wd = new Date().getDay();
+  S.promotores.filter(p => p.ativo !== false && lojasDoDiaWd(p.id, wd).length).forEach(p => {
+    if (Object.values(AL.vis).some(v => v.promotorId === p.id)) return;
+    notifica('ini-' + p.id, `⏰ ${p.nome.split(' ')[0]} ainda não começou a rota`, `Sem check-in até ${hm(Date.now())} (início previsto ${R.inicioPrevisto}). ${(n => n + (n === 1 ? ' loja' : ' lojas'))(lojasDoDiaWd(p.id, wd).length)} na rota de hoje.`);
+  });
+}
+
 function assinaPainel() {
   if (P.unsub) P.unsub(); if (P.unsubJ) P.unsubJ();
   P.vis = {}; P.jor = {};
@@ -148,11 +197,13 @@ function renderPainel() {
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
     c.innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div><h2 style="margin:0">Torre de controle</h2><div class="muted" id="p-sub" style="font-size:13px"></div></div>
-      <div class="row"><div class="seg" id="p-modo"><button data-m="dia">Dia</button><button data-m="mes">Mês</button></div>
+      <div class="row"><button class="btn sm" id="p-alertas" title="Notificações no aparelho: chegada em loja, não visitou e promotor que não começou a rota"></button><div class="seg" id="p-modo"><button data-m="dia">Dia</button><button data-m="mes">Mês</button></div>
       <span class="row" id="p-ctl-dia"><button class="btn sm" id="p-ant" aria-label="Dia anterior">‹</button><input type="date" id="p-data" style="width:auto"><button class="btn sm" id="p-prox" aria-label="Próximo dia">›</button><button class="btn sm" id="p-hoje">Hoje</button></span>
       <span class="row" id="p-ctl-mes"><button class="btn sm" id="m-ant" aria-label="Mês anterior">‹</button><input type="month" id="p-mes" style="width:auto"><button class="btn sm" id="m-prox" aria-label="Próximo mês">›</button><button class="btn sm" id="m-atu">Atualizar</button></span></div></div>
       <div id="p-kpis"></div><div id="p-corpo"></div>`;
     $('#p-mes').value = P.mes;
+    const ba = $('#p-alertas'); const pintaAl = () => { ba.textContent = AL.on && window.Notification && Notification.permission === 'granted' ? '🔔 Alertas ligados' : '🔕 Ligar alertas'; ba.classList.toggle('primary', !!(AL.on && window.Notification && Notification.permission === 'granted')); };
+    pintaAl(); ba.onclick = async () => { await ligaAlertas(!(AL.on && Notification.permission === 'granted')); pintaAl(); };
     const mudaMes = m => { P.mes = m; $('#p-mes').value = m; P.selMes = ''; renderPainel(); };
     $('#p-mes').onchange = e => { if (e.target.value) mudaMes(e.target.value); };
     const somaMes = n => { const [y, mm] = P.mes.split('-').map(Number); const d = new Date(y, mm - 1 + n, 1); mudaMes(ymd(d).slice(0, 7)); };

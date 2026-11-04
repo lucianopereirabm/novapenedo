@@ -1,5 +1,5 @@
 // Service worker: guarda o app para abrir sem internet. Sempre tenta a rede primeiro.
-const CACHE = 'rota-np-v36';
+const CACHE = 'rota-np-v37';
 const ARQS = ['./', './index.html', './gestao.html', './css/app.css', './js/fb.js', './js/promotor.js', './js/gestao.js', './js/rosto.js', './js/termos.js', './js/jornada.js', './lib/face-api.esm.js',
   './models/tiny_face_detector_model-weights_manifest.json', './models/tiny_face_detector_model.bin', './models/face_landmark_68_model-weights_manifest.json', './models/face_landmark_68_model.bin', './models/face_recognition_model-weights_manifest.json', './models/face_recognition_model.bin',
   './manifest.webmanifest', './img/icon-192.png', './img/icon-512.png', './img/logo.png', './img/logo-full.png'];
@@ -26,4 +26,11 @@ self.addEventListener('fetch', e => {
     const t = setTimeout(() => doCache().then(fim), 4000);
     rede.then(r => { clearTimeout(t); fim(r); }, () => { clearTimeout(t); doCache().then(r => r ? fim(r) : fim(Response.error())); });
   }));
+});
+
+// toque na notificação: abre (ou traz para frente) a Gestão
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || 'gestao.html';
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => { const c = cs.find(x => x.url.includes('gestao')); return c ? c.focus() : self.clients.openWindow(url); }));
 });
