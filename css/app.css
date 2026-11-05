@@ -280,3 +280,17 @@ table.det .pill{font-size:11.5px;padding:3px 8px}
 
 /* gestor só de monitoramento: esconde botões que alteram dados */
 body.so-leitura #p-geo-b, body.so-leitura #p-dgeo-b, body.so-leitura #md-local { display: none !important; }
+
+/* lista de lojas do dia (cabe na tela do celular, sem rolar para o lado) */
+.paradas{display:flex;flex-direction:column}
+.parada{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;width:100%;background:none;border:0;border-top:1px solid var(--line);padding:10px 4px;color:inherit;font:inherit}
+.parada:first-child{border-top:0}
+.parada:hover{background:var(--sunk)}
+.parada .pa-n{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:13px;background:var(--sunk);color:var(--ink)}
+.parada.ok .pa-n{background:#27AE60;color:#fff}.parada.live .pa-n{background:#F2994A;color:#fff}.parada.no .pa-n{background:#EB5757;color:#fff}
+.parada .pa-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.parada .pa-t b{font-size:14.5px;overflow-wrap:anywhere}
+.parada .pa-t .muted{font-size:12px}
+.parada .pa-c{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.parada .pa-s{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:12px;text-align:right}
+.parada .pa-f{font-size:11.5px;font-weight:700;color:var(--link);white-space:nowrap}
