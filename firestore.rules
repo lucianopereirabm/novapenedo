@@ -18,18 +18,23 @@ service cloud.firestore {
     function isMonitor() {
       return logado() && exists(/databases/$(database)/documents/monitores/$(request.auth.uid));
     }
+    // Gestor só de monitoramento (lista "leitores"): lê a operação, não altera nada
+    function isLeitor() {
+      return logado() && exists(/databases/$(database)/documents/leitores/$(request.auth.uid));
+    }
     function isEquipe() {
       return isAdmin() || (logado() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)));
     }
 
     match /admins/{uid}    { allow read: if isAdmin(); allow write: if isAdmin(); }
     match /monitores/{uid} { allow read, write: if isAdmin(); }
+    match /leitores/{uid}  { allow read: if isAdmin() || (logado() && request.auth.uid == uid); allow write: if isAdmin(); }
     match /usuarios/{uid}  { allow read: if isAdmin() || (logado() && request.auth.uid == uid); allow write: if isAdmin(); }
 
     // Cadastros: equipe lê, só administrador altera
-    match /promotores/{id} { allow read: if isEquipe() || isMonitor(); allow write: if isAdmin(); }
-    match /lojas/{id}      { allow read: if isEquipe() || isMonitor(); allow write: if isAdmin(); }
-    match /config/{id}     { allow read: if isEquipe() || isMonitor(); allow write: if isAdmin(); }
+    match /promotores/{id} { allow read: if isEquipe() || isMonitor() || isLeitor(); allow write: if isAdmin(); }
+    match /lojas/{id}      { allow read: if isEquipe() || isMonitor() || isLeitor(); allow write: if isAdmin(); }
+    match /config/{id}     { allow read: if isEquipe() || isMonitor() || isLeitor(); allow write: if isAdmin(); }
 
     // Vendas, trocas e variável: só administrador
     match /vendas/{id}     { allow read, write: if isAdmin(); }
@@ -51,15 +56,15 @@ service cloud.firestore {
     }
     // Celular vinculado ao promotor (um por promotor): o próprio app registra; só a gestão desvincula (apaga)
     match /aparelhos/{pid} {
-      allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid);
+      allow read: if isAdmin() || isLeitor() || (isEquipe() && meuPromotor() == pid);
       allow create, update: if isAdmin() || (isEquipe() && meuPromotor() == pid && request.resource.data.promotorId == pid);
       allow delete: if isAdmin();
     }
-    match /rostos/{pid}    { allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid); allow write: if isAdmin(); }
+    match /rostos/{pid}    { allow read: if isAdmin() || isLeitor() || (isEquipe() && meuPromotor() == pid); allow write: if isAdmin(); }
 
     // Visitas do dia: promotor só cria/altera as próprias
     match /dias/{dia}/visitas/{vid} {
-      allow read: if isAdmin() || isMonitor() || (isEquipe() && resource.data.promotorId == meuPromotor());
+      allow read: if isAdmin() || isMonitor() || isLeitor() || (isEquipe() && resource.data.promotorId == meuPromotor());
       allow create: if isAdmin() || (isEquipe() && request.resource.data.promotorId == meuPromotor());
       allow update: if isAdmin() || (isEquipe()
         && resource.data.promotorId == meuPromotor()
@@ -68,11 +73,12 @@ service cloud.firestore {
     }
     // Fotos da visita: id termina com _<promotor>
     match /dias/{dia}/jornadas/{pid} {
-      allow read: if isAdmin() || (isEquipe() && meuPromotor() == pid);
+      allow read: if isAdmin() || isLeitor() || (isEquipe() && meuPromotor() == pid);
       allow create, update: if isAdmin() || (isEquipe() && meuPromotor() == pid && request.resource.data.promotorId == pid);
       allow delete: if isAdmin();
     }
     match /dias/{dia}/fotos/{vid} {
+      allow read: if isLeitor();
       allow read, write: if isAdmin() || (isEquipe() && vid.matches('.*_' + meuPromotor()));
     }
 

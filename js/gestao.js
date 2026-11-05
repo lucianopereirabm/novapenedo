@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-05.1';
+const VERSAO_GESTAO = '2026-11-05.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -20,11 +20,13 @@ const LOGO = 'img/logo.png';
 const S = { pesquisa: PESQ_PADRAO, termos: {}, empresa: {}, rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
   tab: lsGet('np.g.tab') || 'painel', pronto: { p: false, l: false } };
 const secoes = ['painel', 'montar', 'cli', 'var', 'equipe', 'config'];
+const DOMINIO_GESTOR = 'gestor.novapenedo.app';
 
 /* ---------- login ---------- */
 $('#f-login').addEventListener('submit', async e => {
   e.preventDefault(); $('#lg-msg').textContent = 'Entrando…';
-  try { await signInWithEmailAndPassword(auth, $('#lg-email').value.trim(), $('#lg-senha').value); }
+  const u = $('#lg-email').value.trim(); const email = u.includes('@') ? u : `${semAcento(u).replace(/[^a-z0-9._-]/g, '')}@${DOMINIO_GESTOR}`;
+  try { await signInWithEmailAndPassword(auth, email, $('#lg-senha').value); }
   catch (err) { $('#lg-msg').textContent = erroMsg(err).replace('Login ou senha incorretos', 'E-mail ou senha incorretos'); }
 });
 $('#sair').onclick = async () => { await signOut(auth); location.reload(); };
@@ -33,8 +35,13 @@ onAuthStateChanged(auth, async user => {
   if (!user) { $('#shell').hidden = true; return; }
   let admin = user.uid === ADMIN_UID;
   if (!admin) { try { admin = (await getDoc(doc(db, 'admins', user.uid))).exists(); } catch (e) {} }
-  if (!admin) { $('#v-negado').hidden = false; return; }
-  $('#quem').innerHTML = `Gestão<b>${h(user.email || '')}</b>`;
+  if (!admin) { try { S.leitura = (await getDoc(doc(db, 'leitores', user.uid))).exists(); } catch (e) {} }
+  if (!admin && !S.leitura) { $('#v-negado').hidden = false; return; }
+  if (S.leitura) { // gestor só de monitoramento: só a Torre, sem alterar nada
+    document.body.classList.add('so-leitura'); S.tab = 'painel';
+    document.querySelectorAll('.side-item').forEach(b => { if (b.dataset.go !== 'painel') b.hidden = true; });
+  }
+  $('#quem').innerHTML = `${S.leitura ? 'Monitoramento' : 'Gestão'}<b>${h(S.leitura ? (user.email || '').replace('@' + DOMINIO_GESTOR, '') : (user.email || ''))}</b>`;
   $('#shell').hidden = false; $('#versao-g').textContent = 'Versão ' + VERSAO_GESTAO; iniciar();
 });
 
@@ -46,17 +53,18 @@ function iniciar() {
   escuta(collection(db, 'promotores'), s => { S.promotores = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.nome.localeCompare(b.nome)); S.pronto.p = true; render(); }, e => toast(erroMsg(e)));
   escuta(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
   escuta(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; S.erroRostos = ''; S.qtdRostos = s.size; if (['equipe', 'painel'].includes(S.tab)) render(); }, e => { S.erroRostos = (e && (e.code || e.message)) || 'erro'; if (S.tab === 'equipe') render(); });
-  escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
+  if (!S.leitura) escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
   escuta(collection(db, 'aparelhos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.aparelhos = m; S.erroAparelhos = ''; if (S.tab === 'equipe') render(); }, e => { S.erroAparelhos = (e && e.code) || 'erro'; if (S.tab === 'equipe') render(); });
-  escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
+  if (!S.leitura) escuta(collection(db, 'leitores'), s => { S.leitores = s.docs.map(d => ({ id: d.id, ...d.data() })); if (S.tab === 'equipe') render(); }, () => {});
+  if (!S.leitura) escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
   escuta(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.tab === 'config') render(); }, () => {});
-  escuta(doc(db, 'config', 'rotasBackup'), s => { S.bkRotas = s.exists() ? s.data() : null; if (S.tab === 'montar') render(); }, () => {});
+  if (!S.leitura) escuta(doc(db, 'config', 'rotasBackup'), s => { S.bkRotas = s.exists() ? s.data() : null; if (S.tab === 'montar') render(); }, () => {});
   escuta(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
   document.querySelectorAll('.side-item').forEach(b => b.onclick = () => { S.tab = b.dataset.go; lsSet('np.g.tab', S.tab); mostra(); window.scrollTo(0, 0); });
   if (!secoes.includes(S.tab)) S.tab = 'painel';
-  mostra(); assinaPainel(); assinaVar(); iniciaAlertas();
+  mostra(); assinaPainel(); if (!S.leitura) assinaVar(); iniciaAlertas();
   // a cada minuto: atualiza horários na tela e, se estiver vendo "hoje", vira o dia sozinho à meia-noite
   let hojeAntes = ymd(new Date());
   setInterval(() => {
@@ -590,7 +598,7 @@ async function detalheVisita(date, id) {
      <div class="note ${v.semCoord ? 'warn' : foraLoja(v) ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m ${v.localAprox ? 'do endereço (local aproximado, tolerância ' + (v.limite || 500) + ' m)' : 'da loja'}` : ''}${foraLoja(v) ? ' · <b>⚠️ fora da loja</b>' : ''}${v.distOut != null ? ` · check-out a ${v.distOut} m` : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
      ${linhaEnvio(v)}
      ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
-     ${v.gpsIn && loja ? `<div class="row"><button class="btn sm" id="md-local">Usar este ponto como local da loja</button><a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
+     ${v.gpsIn && loja ? `<div class="row">${S.leitura ? '' : '<button class="btn sm" id="md-local">Usar este ponto como local da loja</button>'}<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
      <div><div class="label">Checklist</div>${Object.keys(resp).filter(k => resp[k]).map(k => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(k)}</span><b>${resp[k] === 'sim' ? 'Sim' : 'Não'}</b></div>`).join('') || '<div class="muted">Sem respostas.</div>'}</div>
      <div><div class="label">Pesquisa de preço</div>${S.pesquisa.map(q => { const x = (v.precos || {})[q.replace(/[.~*/\[\]]/g, '_')]; return `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(q)}</span><b class="num">${!x ? '<span class="muted">não informado</span>' : x.falta ? '<span style="color:var(--crit)">não tem na loja</span>' : brl(x.preco)}</b></div>`; }).join('')}</div>
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}
@@ -1105,8 +1113,22 @@ function renderEquipe() {
       <td style="font-size:13px;white-space:normal;min-width:240px">${p.telefone ? `📞 ${h(p.telefone)}` : '<span class="muted">sem telefone</span>'}${p.email ? `<div class="muted">✉ ${h(p.email)}</div>` : ''}${p.endereco || p.cidadeRes ? `<div class="muted">🏠 ${h([p.endereco, [p.cidadeRes, p.ufRes].filter(Boolean).join('/'), p.cepRes].filter(Boolean).join(' · '))}</div>` : '<div class="muted">sem endereço</div>'}</td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
       <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
       <td class="r"><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">${a ? celularCel(p) : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
-    </tbody></table></div></div>`;
+    </tbody></table></div></div>
+    <div class="card stack"><div class="spread"><h3>Gestores só de monitoramento</h3><span class="muted" style="font-size:12px">Veem só a Torre de controle. Não alteram nada.</span></div>
+      ${(S.leitores || []).length ? `<div class="stack" style="gap:6px">${S.leitores.map(x => `<div class="spread" style="border-bottom:1px solid var(--line);padding:6px 0"><span><b>${h(x.usuario)}</b> <span class="muted" style="font-size:12px">· criado em ${new Date(x.criado).toLocaleDateString('pt-BR')}</span></span><button class="btn sm danger" data-rl="${h(x.id)}">Remover acesso</button></div>`).join('')}</div>` : '<div class="muted" style="font-size:14px">Nenhum gestor de monitoramento cadastrado.</div>'}
+      <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap"><label class="field" style="flex:1 1 160px"><span>Usuário</span><input type="text" id="gl-u" autocapitalize="none" autocomplete="off" placeholder="ex.: gestao"></label>
+      <label class="field" style="flex:1 1 160px"><span>Senha (mín. 6 caracteres)</span><input type="text" id="gl-s" autocomplete="off"></label><button class="btn primary" id="gl-c">Criar acesso</button></div>
+      <div class="muted" style="font-size:12px">Para entrar: mesmo endereço da Gestão, campo "E-mail ou usuário" com o usuário criado aqui.</div></div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
+  $('#gl-c').onclick = async () => {
+    const u = semAcento($('#gl-u').value.trim()).replace(/[^a-z0-9._-]/g, ''), sn = $('#gl-s').value;
+    if (!u) return toast('Digite o usuário.'); if (sn.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres.');
+    const b = $('#gl-c'); b.disabled = true; b.textContent = 'Criando…';
+    try { const uid = await criarContaMonitor(`${u}@${DOMINIO_GESTOR}`, sn); await setDoc(doc(db, 'leitores', uid), { usuario: u, criado: Date.now() }); $('#gl-s').value = ''; toast(`Acesso "${u}" criado. Ele entra na Gestão com esse usuário e a senha.`, 6000); }
+    catch (e) { toast(String(e.code).includes('email-already-in-use') ? 'Esse usuário já existe.' : String(e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "leitores").' : erroMsg(e), 7000); }
+    finally { b.disabled = false; b.textContent = 'Criar acesso'; }
+  };
+  c.querySelectorAll('[data-rl]').forEach(b => b.onclick = async () => { const x = S.leitores.find(y => y.id === b.dataset.rl); if (await confirma(`Remover o acesso de monitoramento "${x.usuario}"? Ele não consegue mais entrar na Gestão.`, 'Remover')) deleteDoc(doc(db, 'leitores', x.id)).then(() => toast('Acesso removido'), e => toast(erroMsg(e))); });
   $('#eq-filtro').querySelectorAll('button').forEach(b => b.onclick = () => { lsSet('np.eq.filtro', b.dataset.f); renderEquipe(); });
   c.querySelectorAll('[data-at]').forEach(b => b.onclick = () => ativarCelular(S.promotores.find(p => p.id === b.dataset.at)));
   c.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => desvincularCelular(S.promotores.find(p => p.id === b.dataset.dv)));
