@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-04.14';
+const VERSAO_GESTAO = '2026-11-05.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -734,11 +734,12 @@ function pdfRotaEscolha() {
   abreModal(`<div class="spread"><h3>PDF da rota</h3><button class="btn ghost" id="pr-x">Fechar</button></div>
     <label class="row" style="gap:8px;font-weight:700"><input type="checkbox" id="pr-todos"> Marcar todos</label>
     <div class="stack" style="gap:6px;max-height:50vh;overflow:auto" id="pr-lista">${ps.map(p => `<label class="row" style="gap:8px"><input type="checkbox" data-pr="${h(p.id)}" ${p.id === M.pid ? 'checked' : ''}> ${h(p.nome)} <span class="muted" style="font-size:12px">· ${new Set([1, 2, 3, 4, 5, 6, 0].flatMap(d => lojasDoDiaWd(p.id, d).map(l => l.id))).size} clientes</span></label>`).join('')}</div>
+    <label class="row" style="gap:8px;border-top:1px solid var(--line);padding-top:10px"><input type="checkbox" id="pr-transp" ${lsGet('np.pdf.transp') === '0' ? '' : 'checked'}> Mostrar transporte (km e valor das passagens)</label>
     <div class="row end"><button class="btn" id="pr-c">Cancelar</button><button class="btn primary" id="pr-s">Gerar PDF</button></div>`);
   const cks = () => [...document.querySelectorAll('[data-pr]')];
   $('#pr-todos').onchange = e => cks().forEach(c => c.checked = e.target.checked);
   $('#pr-x').onclick = $('#pr-c').onclick = fechaModal;
-  $('#pr-s').onclick = () => { const ids = cks().filter(c => c.checked).map(c => c.dataset.pr); if (!ids.length) return toast('Marque pelo menos um promotor.'); fechaModal(); pdfRotas(ids); };
+  $('#pr-s').onclick = () => { const ids = cks().filter(c => c.checked).map(c => c.dataset.pr); if (!ids.length) return toast('Marque pelo menos um promotor.'); const tr = $('#pr-transp').checked; lsSet('np.pdf.transp', tr ? '1' : '0'); fechaModal(); pdfRotas(ids, { transporte: tr }); };
 }
 // ----- passagens: tarifas por cidade e entre cidades (Configurações) -----
 const semAc = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
@@ -764,9 +765,10 @@ async function custoDia(pid, wd) {
   }
   return { lojas, km, pass, valor, avisos: [...avisos] };
 }
-async function pdfRotas(ids) {
+async function pdfRotas(ids, op = {}) {
+  const transp = op.transporte !== false;
   const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
-  toast('Calculando distâncias e passagens… pode levar alguns segundos.', 8000);
+  if (transp) toast('Calculando distâncias e passagens… pode levar alguns segundos.', 8000);
   const logo = await carregaImg(LOGO).catch(() => null);
   const d = new J({ unit: 'mm', format: 'a4', orientation: 'landscape' }); const W = 297, H = 210, M = 10;
   const brl = v => 'R$ ' + v.toFixed(2).replace('.', ',');
@@ -778,13 +780,15 @@ async function pdfRotas(ids) {
     const pid = ids[k]; if (k) d.addPage();
     const p = S.promotores.find(x => x.id === pid) || {};
     const dias = [1, 2, 3, 4, 5, 6].concat(lojasDoDiaWd(pid, 0).length ? [0] : []);
-    const C = {}; for (const wd of dias) C[wd] = await custoDia(pid, wd);
+    const C = {}; for (const wd of dias) C[wd] = transp ? await custoDia(pid, wd) : { lojas: lojasDoDiaWd(pid, wd), km: 0, pass: 0, valor: 0, avisos: [] };
     // cabeçalho
     d.setFillColor(23, 25, 37); d.rect(0, 0, W, 22, 'F'); d.setFillColor(244, 188, 28); d.rect(0, 22, W, 1.3, 'F');
     if (logo) try { d.addImage(logo, 'PNG', M, 5.5, 58, 11.1); } catch (e) {}
-    d.setTextColor(255, 255, 255); d.setFont(undefined, 'bold'); d.setFontSize(15); d.text(p.nome || promNome(pid), W - M, 11, { align: 'right' });
+    const foto = S.rostos[pid] && S.rostos[pid].foto; const xr = foto ? W - M - 19 : W - M;
+    if (foto) { try { d.setFillColor(244, 188, 28); d.roundedRect(W - M - 17.2, 2.3, 17.4, 17.4, 2.5, 2.5, 'F'); d.addImage(foto, 'JPEG', W - M - 16.5, 3, 16, 16); } catch (e) {} }
+    d.setTextColor(255, 255, 255); d.setFont(undefined, 'bold'); d.setFontSize(15); d.text(p.nome || promNome(pid), xr, 11, { align: 'right' });
     d.setFont(undefined, 'normal'); d.setFontSize(8); d.setTextColor(210, 212, 220);
-    d.text(`ROTA DA SEMANA · casa: ${[p.endereco ? String(p.endereco).split(',').slice(0, 1)[0] : '', p.cidadeRes].filter(Boolean).join(' · ') || 'sem endereço'}`, W - M, 17, { align: 'right' });
+    d.text(`ROTA DA SEMANA${transp ? ' · casa: ' + ([p.endereco ? String(p.endereco).split(',').slice(0, 1)[0] : '', p.cidadeRes].filter(Boolean).join(' · ') || 'sem endereço') : ''}`, xr, 17, { align: 'right' });
     // colunas
     const top = 28, n = dias.length, gap = 2.5, cw = (W - 2 * M - gap * (n - 1)) / n, rodape = 37, area = H - top - rodape - 19;
     const maxL = Math.max(1, ...dias.map(wd => C[wd].lojas.length)); const ch = Math.min(15, (area - 10) / maxL);
@@ -806,15 +810,19 @@ async function pdfRotas(ids) {
       const yb = top + area + 2;
       d.setFillColor(241, 242, 245); d.roundedRect(x, yb, cw, 13, 1.5, 1.5, 'F');
       d.setTextColor(23, 25, 37); d.setFont(undefined, 'bold'); d.setFontSize(8.5);
-      d.text(c.lojas.length ? kmf(c.km) : '—', x + cw / 2, yb + 4.8, { align: 'center' });
-      d.setFont(undefined, 'normal'); d.setFontSize(7.4); d.setTextColor(70, 74, 90);
-      d.text(c.lojas.length ? `${c.pass} ${c.pass === 1 ? 'passagem' : 'passagens'} · ${brl(c.valor)}` : '', x + cw / 2, yb + 9.6, { align: 'center' });
+      if (transp) {
+        d.text(c.lojas.length ? kmf(c.km) : '—', x + cw / 2, yb + 4.8, { align: 'center' });
+        d.setFont(undefined, 'normal'); d.setFontSize(7.4); d.setTextColor(70, 74, 90);
+        d.text(c.lojas.length ? `${c.pass} ${c.pass === 1 ? 'passagem' : 'passagens'} · ${brl(c.valor)}` : '', x + cw / 2, yb + 9.6, { align: 'center' });
+      } else d.text(c.lojas.length ? `${c.lojas.length} ${c.lojas.length === 1 ? 'cliente' : 'clientes'}` : '—', x + cw / 2, yb + 7.6, { align: 'center' });
     });
     // resumo
     const sem = dias.reduce((t, wd) => ({ km: t.km + C[wd].km, pass: t.pass + C[wd].pass, valor: t.valor + C[wd].valor, lojas: t.lojas + C[wd].lojas.length }), { km: 0, pass: 0, valor: 0, lojas: 0 });
     const mes = dias.reduce((t, wd) => ({ dias: t.dias + (C[wd].lojas.length ? diasNoMes(wd) : 0), km: t.km + C[wd].km * diasNoMes(wd), pass: t.pass + C[wd].pass * diasNoMes(wd), valor: t.valor + C[wd].valor * diasNoMes(wd) }), { dias: 0, km: 0, pass: 0, valor: 0 });
     const ys = H - rodape + 4; const bw = (W - 2 * M - 3 * 4) / 4;
-    [['VISITAS NA SEMANA', String(sem.lojas)], ['DISTÂNCIA NA SEMANA', kmf(sem.km)], ['PASSAGENS NA SEMANA', `${sem.pass} · ${brl(sem.valor)}`], [`ESTIMATIVA ${mesNome.toUpperCase()}`, `${mes.pass} pass. · ${brl(mes.valor)}`]].forEach(([t, v], j) => {
+    const clientes = new Set(dias.flatMap(wd => C[wd].lojas.map(l => l.id))).size;
+    (transp ? [['VISITAS NA SEMANA', String(sem.lojas)], ['DISTÂNCIA NA SEMANA', kmf(sem.km)], ['PASSAGENS NA SEMANA', `${sem.pass} · ${brl(sem.valor)}`], [`ESTIMATIVA ${mesNome.toUpperCase()}`, `${mes.pass} pass. · ${brl(mes.valor)}`]]
+      : [['CLIENTES NA ROTA', String(clientes)], ['VISITAS NA SEMANA', String(sem.lojas)], ['DIAS DE ROTA NA SEMANA', String(dias.filter(wd => C[wd].lojas.length).length)], [`DIAS DE ROTA EM ${mesNome.toUpperCase()}`, String(mes.dias)]]).forEach(([t, v], j) => {
       const x = M + j * (bw + 4); const dest = j === 3;
       d.setFillColor(...(dest ? [244, 188, 28] : [23, 25, 37])); d.roundedRect(x, ys, bw, 15, 2, 2, 'F');
       d.setTextColor(...(dest ? [23, 25, 37] : [200, 203, 212])); d.setFont(undefined, 'normal'); d.setFontSize(7); d.text(t, x + 4, ys + 5);
@@ -824,7 +832,7 @@ async function pdfRotas(ids) {
     const tarifasUsadas = [...new Set(dias.flatMap(wd => [p.cidadeRes, ...C[wd].lojas.map(l => l.municipio)]).map(semAc).filter(Boolean))].map(c => `${tit(c)} ${R.tarifas[c] != null ? brl(+R.tarifas[c]) : '(sem tarifa)'}`);
     d.setFont(undefined, 'normal'); d.setFontSize(6.6); d.setTextColor(110, 114, 128);
     const nota = `Distância de carro pelas ruas (OpenStreetMap), saindo de casa, passando pelas lojas na ordem e voltando para casa. 1 passagem por trecho acima de ${String(R.aPe).replace('.', ',')} km (mais perto: a pé). Tarifas: ${tarifasUsadas.join(' · ')}${Object.keys(R.inter).length ? ' · entre cidades: ' + Object.entries(R.inter).map(([k, v]) => k.split('|').map(tit).join(' x ') + ' ' + brl(+v)).join(' · ') : ''}. Estimativa do mês: dias de rota de ${mesNome}.${avisos.length ? ' Atenção: ' + avisos.join('; ') + '.' : ''}`;
-    d.text(d.splitTextToSize(nota, W - 2 * M - 40), M, H - 8.5);
+    if (transp) d.text(d.splitTextToSize(nota, W - 2 * M - 40), M, H - 8.5);
     d.text(`Gerado em ${agora.toLocaleDateString('pt-BR')} ${hm(Date.now())}`, W - M, H - 4, { align: 'right' });
   }
   d.save(`Rota${ids.length === 1 ? ' ' + promNome(ids[0]).split(' ')[0] : 's ' + ids.length + ' promotores'} ${ymd(new Date())}.pdf`);
