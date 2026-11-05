@@ -2,14 +2,14 @@
 import {
   auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
   deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField,
-  criarAcessoPromotor, apagarContaPromotor, criarContaMonitor, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
+  criarAcessoPromotor, apagarContaPromotor, criarContaMonitor, trocarSenhaConta, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
 import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.js';
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-05.2';
+const VERSAO_GESTAO = '2026-11-05.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1115,20 +1115,24 @@ function renderEquipe() {
       <td class="r"><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">${a ? celularCel(p) : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
     </tbody></table></div></div>
     <div class="card stack"><div class="spread"><h3>Gestores só de monitoramento</h3><span class="muted" style="font-size:12px">Veem só a Torre de controle. Não alteram nada.</span></div>
-      ${(S.leitores || []).length ? `<div class="stack" style="gap:6px">${S.leitores.map(x => `<div class="spread" style="border-bottom:1px solid var(--line);padding:6px 0"><span><b>${h(x.usuario)}</b> <span class="muted" style="font-size:12px">· criado em ${new Date(x.criado).toLocaleDateString('pt-BR')}</span></span><button class="btn sm danger" data-rl="${h(x.id)}">Remover acesso</button></div>`).join('')}</div>` : '<div class="muted" style="font-size:14px">Nenhum gestor de monitoramento cadastrado.</div>'}
-      <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap"><label class="field" style="flex:1 1 160px"><span>Usuário</span><input type="text" id="gl-u" autocapitalize="none" autocomplete="off" placeholder="ex.: gestao"></label>
-      <label class="field" style="flex:1 1 160px"><span>Senha (mín. 6 caracteres)</span><input type="text" id="gl-s" autocomplete="off"></label><button class="btn primary" id="gl-c">Criar acesso</button></div>
-      <div class="muted" style="font-size:12px">Para entrar: mesmo endereço da Gestão, campo "E-mail ou usuário" com o usuário criado aqui.</div></div>`;
+      <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap"><label class="field" style="flex:1 1 140px"><span>Usuário</span><input type="text" id="gl-u" autocapitalize="none" autocomplete="off" placeholder="ex.: gestao"></label>
+      <label class="field" style="flex:1 1 180px"><span>Nome (opcional)</span><input type="text" id="gl-n" autocomplete="off" placeholder="ex.: Supervisor Volta Redonda"></label>
+      <label class="field" style="flex:1 1 140px"><span>Senha (mín. 6 caracteres)</span><input type="text" id="gl-s" autocomplete="off"></label><button class="btn primary" id="gl-c">Criar acesso</button></div>
+      <div class="muted" style="font-size:12px">Para entrar: mesmo endereço da Gestão, campo "E-mail ou usuário" com o usuário criado aqui.</div>
+      <div class="label" style="margin-top:6px">Cadastrados (${(S.leitores || []).length})</div>
+      ${(S.leitores || []).length ? `<div class="table-wrap"><table><thead><tr><th>Usuário</th><th>Nome</th><th>Criado em</th><th></th></tr></thead><tbody>${S.leitores.slice().sort((a, b) => a.usuario.localeCompare(b.usuario)).map(x => `<tr><td><b>${h(x.usuario)}</b></td><td>${h(x.nome || '—')}</td><td class="num">${new Date(x.criado).toLocaleDateString('pt-BR')}${x.senhaTrocada ? `<div class="muted" style="font-size:11px">senha trocada em ${new Date(x.senhaTrocada).toLocaleDateString('pt-BR')}</div>` : ''}</td>
+        <td class="r"><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap"><button class="btn sm" data-el="${h(x.id)}">Editar</button><button class="btn sm danger" data-rl="${h(x.id)}">Excluir</button></div></td></tr>`).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:14px">Nenhum gestor de monitoramento cadastrado.</div>'}</div>`;
   $('#eq-novo').onclick = () => editaPromotor(null);
   $('#gl-c').onclick = async () => {
     const u = semAcento($('#gl-u').value.trim()).replace(/[^a-z0-9._-]/g, ''), sn = $('#gl-s').value;
     if (!u) return toast('Digite o usuário.'); if (sn.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres.');
     const b = $('#gl-c'); b.disabled = true; b.textContent = 'Criando…';
-    try { const uid = await criarContaMonitor(`${u}@${DOMINIO_GESTOR}`, sn); await setDoc(doc(db, 'leitores', uid), { usuario: u, criado: Date.now() }); $('#gl-s').value = ''; toast(`Acesso "${u}" criado. Ele entra na Gestão com esse usuário e a senha.`, 6000); }
+    try { const uid = await criarContaMonitor(`${u}@${DOMINIO_GESTOR}`, sn); await setDoc(doc(db, 'leitores', uid), { usuario: u, nome: $('#gl-n').value.trim(), criado: Date.now() }); $('#gl-s').value = ''; $('#gl-u').value = ''; $('#gl-n').value = ''; toast(`Acesso "${u}" criado. Ele entra na Gestão com esse usuário e a senha.`, 6000); }
     catch (e) { toast(String(e.code).includes('email-already-in-use') ? 'Esse usuário já existe.' : String(e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "leitores").' : erroMsg(e), 7000); }
     finally { b.disabled = false; b.textContent = 'Criar acesso'; }
   };
-  c.querySelectorAll('[data-rl]').forEach(b => b.onclick = async () => { const x = S.leitores.find(y => y.id === b.dataset.rl); if (await confirma(`Remover o acesso de monitoramento "${x.usuario}"? Ele não consegue mais entrar na Gestão.`, 'Remover')) deleteDoc(doc(db, 'leitores', x.id)).then(() => toast('Acesso removido'), e => toast(erroMsg(e))); });
+  c.querySelectorAll('[data-el]').forEach(b => b.onclick = () => editaLeitor(S.leitores.find(y => y.id === b.dataset.el)));
+  c.querySelectorAll('[data-rl]').forEach(b => b.onclick = async () => { const x = S.leitores.find(y => y.id === b.dataset.rl); if (await confirma(`Excluir o acesso de monitoramento "${x.usuario}"? Ele não consegue mais entrar na Gestão.`, 'Excluir')) deleteDoc(doc(db, 'leitores', x.id)).then(() => toast('Acesso excluído'), e => toast(erroMsg(e))); });
   $('#eq-filtro').querySelectorAll('button').forEach(b => b.onclick = () => { lsSet('np.eq.filtro', b.dataset.f); renderEquipe(); });
   c.querySelectorAll('[data-at]').forEach(b => b.onclick = () => ativarCelular(S.promotores.find(p => p.id === b.dataset.at)));
   c.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => desvincularCelular(S.promotores.find(p => p.id === b.dataset.dv)));
@@ -1208,6 +1212,31 @@ function editaPromotor(p) {
   };
 }
 const fotoFicha = r => r && r.foto ? `<img src="${r.foto}" alt="Foto do rosto" style="width:84px;height:84px;border-radius:50%;object-fit:cover">` : '<div class="av" style="width:84px;height:84px;background:var(--sunk);color:var(--muted);font-size:12px">sem foto</div>';
+// Editar gestor de monitoramento: nome e troca de senha (a troca pede a senha atual dele)
+function editaLeitor(x) {
+  if (!x) return;
+  abreModal(`<div class="spread"><h3>Editar gestor · ${h(x.usuario)}</h3><button class="btn ghost" id="el-x">Fechar</button></div>
+    <label class="field"><span>Usuário (não muda)</span><input type="text" value="${h(x.usuario)}" disabled></label>
+    <label class="field"><span>Nome</span><input type="text" id="el-n" value="${h(x.nome || '')}" placeholder="ex.: Supervisor Volta Redonda"></label>
+    <details><summary style="cursor:pointer;font-weight:600">Trocar a senha</summary>
+      <label class="field" style="margin-top:8px"><span>Senha atual</span><input type="text" id="el-a" autocomplete="off"></label>
+      <label class="field"><span>Senha nova (mín. 6 caracteres)</span><input type="text" id="el-s" autocomplete="off"></label>
+      <div class="muted" style="font-size:12px">Esqueceu a senha atual? Exclua o acesso e crie de novo com outro usuário.</div></details>
+    <div id="el-m" class="muted" style="font-size:13px;min-height:18px"></div>
+    <div class="row end"><button class="btn" id="el-c">Cancelar</button><button class="btn primary" id="el-ok">Salvar</button></div>`);
+  $('#el-x').onclick = $('#el-c').onclick = fechaModal;
+  $('#el-ok').onclick = async () => {
+    const a = $('#el-a').value, sn = $('#el-s').value, b = $('#el-ok'); const msg = t => $('#el-m').textContent = t;
+    if (sn && sn.length < 6) return msg('A senha nova precisa ter pelo menos 6 caracteres.');
+    if (sn && !a) return msg('Para trocar a senha, digite a senha atual.');
+    b.disabled = true; b.textContent = 'Salvando…';
+    try {
+      const upd = { nome: $('#el-n').value.trim() };
+      if (sn) { await trocarSenhaConta(`${x.usuario}@${DOMINIO_GESTOR}`, a, sn); upd.senhaTrocada = Date.now(); }
+      await updateDoc(doc(db, 'leitores', x.id), upd); fechaModal(); toast(sn ? 'Senha trocada e dados salvos.' : 'Dados salvos.');
+    } catch (e) { b.disabled = false; b.textContent = 'Salvar'; msg(/invalid-credential|wrong-password/.test(String(e.code)) ? 'A senha atual não confere.' : erroMsg(e)); }
+  };
+}
 // Coluna do celular: ativado (com aparelho e último acesso) ou botão para ativar
 function celularCel(p) {
   const ap = (S.aparelhos || {})[p.id];

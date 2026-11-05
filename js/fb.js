@@ -73,6 +73,13 @@ export async function criarContaMonitor(email, senha) {
   finally { try { await signOut(sa); } catch (e) {} try { await deleteApp(sec); } catch (e) {} }
 }
 
+// Troca a senha de uma conta de acesso (precisa da senha atual dela), sem derrubar a sessão do administrador
+export async function trocarSenhaConta(email, atual, nova) {
+  const sec = initializeApp(firebaseConfig, 'ts-' + Date.now()); const sa = getAuth(sec);
+  try { const cr = await signInWithEmailAndPassword(sa, email, atual); await updatePassword(cr.user, nova); }
+  finally { try { await signOut(sa); } catch (e) {} try { await deleteApp(sec); } catch (e) {} }
+}
+
 // Apaga a conta antiga de login de um promotor (quando o login é trocado). Se não conseguir, só segue: o vínculo é removido na Gestão.
 export async function apagarContaPromotor(usuario, codigo) {
   const sec = initializeApp(firebaseConfig, 'del-' + Date.now());
