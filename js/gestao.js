@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-05.6';
+const VERSAO_GESTAO = '2026-11-05.8';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -170,7 +170,7 @@ function diaDoPromotor(pid) {
   const agora = vs.find(x => x.v.status === 'em_loja');
   const ents = vs.map(x => x.v.checkin).filter(Boolean), sais = vs.map(x => x.v.checkout).filter(Boolean);
   const tempo = vs.reduce((a, x) => a + (x.v.checkin && x.v.checkout ? x.v.checkout - x.v.checkin : 0), 0);
-  const alertas = vs.filter(x => x.v.rostoOk === false || (foraLoja(x.v))).length;
+  const alertas = vs.filter(x => alertaAberto(x.v)).length;
   const ultima = vs.filter(x => x.v.checkout).sort((a, b) => b.v.checkout - a.v.checkout)[0];
   const J = calcJornada({ j: (P.jor || {})[pid], vs: vs.map(x => x.v), date: P.data, regras: regrasJornada(S.empresa), hoje: ymd(new Date()) });
   if (P.data === ymd(new Date()) && paradas.some(x => !x.extra && !x.v)) J.hojeAberto = true; // ainda tem loja na rota: saldo só no fim
@@ -197,7 +197,7 @@ function estrada(d) {
   let ult = -1; ps.forEach((x, i) => { if (x.v) ult = i; });
   const pct = ps.length > 1 ? ult / (ps.length - 1) * 100 : (ult >= 0 ? 100 : 0);
   return `<div class="estrada"><div class="trilho"></div><div class="feito" style="width:${Math.max(0, pct)}%"></div>
-    ${ps.map((x, i) => { const v = x.v; const c = !v ? '' : v.status === 'concluida' ? (v.rostoOk === false || (foraLoja(v)) ? 'ok al' : 'ok') : v.status === 'em_loja' ? 'live' : 'no';
+    ${ps.map((x, i) => { const v = x.v; const c = !v ? '' : v.status === 'concluida' ? (alertaAberto(v) ? 'ok al' : 'ok') : v.status === 'em_loja' ? 'live' : 'no';
       const tip = `${i + 1}. ${x.nome}${v ? (v.status === 'nao_visitada' ? ' · não visitada: ' + v.motivo : ' · ' + hm(v.checkin) + (v.checkout ? '–' + hm(v.checkout) : ' (em loja)')) : ' · pendente'}`;
       return `<span class="pt ${c}" style="left:${ps.length > 1 ? i / (ps.length - 1) * 100 : 50}%" title="${h(tip)}"></span>`; }).join('')}</div>`;
 }
@@ -233,7 +233,8 @@ function renderPainel() {
   const dias = [...ids].map(diaDoPromotor).filter(d => d.programadas || d.paradas.length || d.J.tem)
     .sort((a, b) => promNome(a.pid).localeCompare(promNome(b.pid)));
   const T = dias.reduce((t, d) => ({ prog: t.prog + d.programadas, feitas: t.feitas + d.feitas, live: t.live + (d.agora ? 1 : 0), nao: t.nao + d.nao, al: t.al + d.alertas, extras: t.extras + d.extras, at: t.at + (d.J.atencao ? 1 : 0) }), { prog: 0, feitas: 0, live: 0, nao: 0, al: 0, extras: 0, at: 0 });
-  $('#p-kpis').innerHTML = `<div class="kpis num k5"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas</span></div><div class="kpi"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora</span></div><div class="kpi"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas</span></div><div class="kpi"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas (rosto ou GPS)</span></div><div class="kpi"><b style="color:${T.at ? '#B88600' : 'inherit'}">${T.at}</b><span>Atenção agora (parado ou sem início)</span></div></div>`;
+  $('#p-kpis').innerHTML = `<div class="kpis num k5"><button class="kpi kbtn" data-k="feitas"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas ›</span></button><button class="kpi kbtn" data-k="live"><b style="color:var(--warn)">${T.live}</b><span>Promotores em loja agora ›</span></button><button class="kpi kbtn" data-k="nao"><b style="color:var(--crit)">${T.nao}</b><span>Não visitadas ›</span></button><button class="kpi kbtn" data-k="al"><b style="color:${T.al ? 'var(--crit)' : 'inherit'}">${T.al}</b><span>Alertas para validar ›</span></button><button class="kpi kbtn" data-k="at"><b style="color:${T.at ? '#B88600' : 'inherit'}">${T.at}</b><span>Atenção agora (parado ou sem início) ›</span></button></div>`;
+  $('#p-kpis').querySelectorAll('[data-k]').forEach(b => b.onclick = () => kpiLista(b.dataset.k, dias));
   const box = $('#p-corpo');
   if (P.sel && dias.some(d => d.pid === P.sel)) return renderDetalhe(dias.find(d => d.pid === P.sel));
   P.sel = '';
@@ -317,7 +318,7 @@ function resumoMes(D, mes) {
       const nao = vs.filter(([, v]) => v.status === 'nao_visitada').length;
       const fora = vs.filter(([k, v]) => !naRota.has(k) && v.status !== 'nao_visitada').length;
       const sem = d < hoje ? lojas.filter(l => !m[l.id + '_' + pid]) : [];
-      const al = vs.filter(([, v]) => v.rostoOk === false || (foraLoja(v))).length;
+      const al = vs.filter(([, v]) => alertaAberto(v)).length;
       const J = calcJornada({ j: (D.jor[d] || {})[pid], vs: vs.map(([, v]) => v), date: d, regras, hoje });
       const falta = !J.tem && d < hoje && lojas.length > 0 && J.esperado > 0 && !vs.some(([, v]) => v.status === 'nao_visitada');
       if (!lojas.length && !vs.length && !J.tem) return;
@@ -406,6 +407,9 @@ function garanteMapa(chave) {
 function enquadra(pts) { if (P.ajustar && pts.length) { P.mapa.fitBounds(pts, { padding: [40, 40], maxZoom: 15 }); P.ajustar = false; } }
 // Ponto da loja no mapa: exato (check-in/manual) ou aproximado (pelo endereço). O raio do check-in usa só o exato.
 // check-in fora da loja: passou do limite gravado na visita (150 m com local exato; folga maior com local aproximado)
+// alerta ainda não tratado pela gestão (rosto diferente ou check-in fora da loja)
+const temAlerta = v => !!v && (v.rostoOk === false || foraLoja(v));
+const alertaAberto = v => temAlerta(v) && !v.alertaTratado;
 const foraLoja = v => !!v && v.distIn != null && v.distIn > (v.limite || S.raio);
 const pontoLoja = l => l && l.lat != null ? [+l.lat, +l.lng] : l && l.latAprox != null ? [+l.latAprox, +l.lngAprox] : null;
 const G = { rodando: false };
@@ -572,7 +576,7 @@ function desenhaMapa(d) {
     L.circleMarker(p, { radius: 5, color: '#fff', weight: 2, fillColor: '#27AE60', fillOpacity: 1 }).bindTooltip(`GPS do check-in · ${h(x.nome)} · ${hm(v.checkin || v.registrado)}${v.distIn != null ? ' · ' + v.distIn + ' m da loja' : ''}`).addTo(P.camada); });
   rota.forEach(y => {
     const v = y.x.v; pts.push(y.p);
-    const cor = !v ? '#fff' : v.status === 'nao_visitada' ? '#EB5757' : v.status === 'em_loja' ? '#F2994A' : (v.rostoOk === false || (foraLoja(v))) ? '#EB5757' : '#27AE60';
+    const cor = !v ? '#fff' : v.status === 'nao_visitada' ? '#EB5757' : v.status === 'em_loja' ? '#F2994A' : alertaAberto(v) ? '#EB5757' : '#27AE60';
     const txt = !v ? '#171925' : '#fff';
     L.marker(y.p, { zIndexOffset: 500, icon: L.divIcon({ className: '', html: `<div class="mk${y.aprox ? ' aprox' : ''}" style="background:${cor};color:${txt}">${y.x.extra ? '+' : y.x.ordem}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] }) })
       .bindTooltip(`<b>${y.x.extra ? 'Fora da rota' : y.x.ordem + 'ª parada'} · ${h(y.x.nome)}</b><br>${!v ? 'Pendente' : v.status === 'nao_visitada' ? 'Não visitada: ' + h(v.motivo) : 'Chegou ' + hm(v.checkin) + (v.checkout ? ' · saiu ' + hm(v.checkout) : ' · em loja')}${y.aprox ? '<br><i>ponto aproximado pelo endereço</i>' : ''}<br><i>toque para ver fotos e preços</i>`, { direction: 'top', offset: [0, -12] })
@@ -594,6 +598,46 @@ function linhaEnvio(v) {
   const longe = x => x > 10 * 60000;
   if (!longe(atrasoIn) && !longe(atrasoOut)) return '<div class="muted" style="font-size:13px">Registros enviados na hora (com sinal).</div>';
   return `<div class="note warn">Feito sem sinal: ${longe(atrasoIn) ? `check-in feito às ${hm(v.checkin || v.registrado)} e recebido às ${hm(rIn)}` : ''}${longe(atrasoIn) && longe(atrasoOut) ? ' · ' : ''}${longe(atrasoOut) ? `check-out feito às ${hm(v.checkout)} e recebido às ${hm(r)}` : ''}. Os horários e o GPS valem do momento em que foram feitos no celular.</div>`;
+}
+// Quadros do alto da Torre: abrem a lista do que está por trás do número
+function kpiLista(k, dias) {
+  const tit = { feitas: 'Visitas do dia', live: 'Promotores em loja agora', nao: 'Lojas não visitadas', al: 'Alertas (rosto ou GPS)', at: 'Atenção agora' }[k];
+  const linha = (d, x, extra) => `<button class="parada ${!x.v ? 'pend' : x.v.status === 'concluida' ? 'ok' : x.v.status === 'nao_visitada' ? 'no' : 'live'}" data-kp="${h(d.pid)}" data-kv="${h(x.id)}"><span class="pa-n">${x.extra ? '+' : x.ordem}</span><span class="pa-t"><b>${h(x.nome)}</b><span class="muted">${h(nomeCurto(d.pid))}${x.bairro ? ' · ' + h(x.bairro) : ''}</span>${extra ? `<span class="pa-c">${extra}</span>` : ''}</span><span class="pa-s">${x.v && x.v.checkin ? `<span class="num muted">${hm(x.v.checkin)}–${x.v.checkout ? hm(x.v.checkout) : '…'}</span>` : ''}${x.v && x.v.status !== 'nao_visitada' ? '<span class="pa-f">📷 ver ›</span>' : ''}</span></button>`;
+  let corpo = '';
+  if (k === 'feitas') {
+    const feitas = dias.flatMap(d => d.paradas.filter(x => x.v && x.v.status === 'concluida').map(x => [d, x]));
+    const pend = dias.flatMap(d => d.paradas.filter(x => !x.extra && (!x.v || x.v.status === 'em_loja')).map(x => [d, x]));
+    corpo = `<div class="label">Realizadas (${feitas.length})</div><div class="paradas">${feitas.map(([d, x]) => linha(d, x)).join('') || '<div class="muted">Nenhuma ainda.</div>'}</div>
+      <div class="label" style="margin-top:10px">Pendentes (${pend.length})</div><div class="paradas">${pend.map(([d, x]) => linha(d, x, x.v ? '<span class="tag">em loja agora</span>' : '')).join('') || '<div class="muted">Nenhuma.</div>'}</div>`;
+  } else if (k === 'live') {
+    corpo = `<div class="paradas">${dias.filter(d => d.agora).map(d => linha(d, d.agora, `<span class="tag">desde ${hm(d.agora.v.checkin)} · ${dur(d.agora.v.checkin, Date.now())}</span>`)).join('') || '<div class="muted">Ninguém em loja agora.</div>'}</div>`;
+  } else if (k === 'nao') {
+    corpo = `<div class="paradas">${dias.flatMap(d => d.paradas.filter(x => x.v && x.v.status === 'nao_visitada').map(x => linha(d, x, `<span class="tag no">${h(x.v.motivo || 'sem motivo')}</span>${x.v.obs ? ' <span class="muted" style="font-size:12px">' + h(x.v.obs) + '</span>' : ''}`))).join('') || '<div class="muted">Nenhuma loja não visitada.</div>'}</div>`;
+  } else if (k === 'al') {
+    const tags = v => [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', foraLoja(v) ? `<span class="tag no">⚠️ fora da loja · ${v.distIn} m</span>` : ''].join(' ');
+    const todos = dias.flatMap(d => d.paradas.filter(x => temAlerta(x.v)).map(x => [d, x]));
+    const ab = todos.filter(([, x]) => !x.v.alertaTratado), tr = todos.filter(([, x]) => x.v.alertaTratado);
+    const acoes = (d, x) => S.leitura ? '' : `<div class="row" style="gap:6px;padding:0 4px 10px 44px;flex-wrap:wrap"><input type="text" placeholder="Observação (opcional): ex. falou com o gerente, GPS falhou…" data-ao="${h(x.id)}" style="flex:1 1 220px;font-size:13px;padding:6px 8px"><button class="btn sm" data-at-ok="${h(x.id)}">✓ Justificado</button><button class="btn sm danger" data-at-ir="${h(x.id)}">✗ Irregular</button></div>`;
+    const res = x => { const t = x.v.alertaTratado; return `<span class="tag ${t.status === 'ok' ? 'ok' : 'no'}">${t.status === 'ok' ? '✓ justificado' : '✗ irregular'}</span>${t.obs ? ' <span class="muted" style="font-size:12px">' + h(t.obs) + '</span>' : ''} <span class="muted" style="font-size:11px">· ${h(t.por || '')} ${hm(t.em)}</span>`; };
+    corpo = `<div class="label">Para validar (${ab.length})</div><div class="paradas">${ab.map(([d, x]) => linha(d, x, tags(x.v)) + acoes(d, x)).join('') || '<div class="muted" style="padding:6px 0">Nenhum alerta aberto. ✓</div>'}</div>
+      ${tr.length ? `<div class="label" style="margin-top:10px">Encerrados (${tr.length})</div><div class="paradas">${tr.map(([d, x]) => linha(d, x, tags(x.v) + ' ' + res(x)) + (S.leitura ? '' : `<div style="padding:0 4px 8px 44px"><button class="btn sm ghost" data-at-re="${h(x.id)}">Reabrir</button></div>`)).join('')}</div>` : ''}`;
+  } else {
+    corpo = `<div class="paradas">${dias.filter(d => d.J.atencao).map(d => `<button class="parada pend" data-kprom="${h(d.pid)}"><span class="pa-n">!</span><span class="pa-t"><b>${h(promNome(d.pid))}</b><span class="muted">${h(d.J.atencao)}</span></span><span class="pa-s"><span class="pa-f">ver rota ›</span></span></button>`).join('') || '<div class="muted">Ninguém precisando de atenção agora.</div>'}</div>`;
+  }
+  abreModal(`<div class="spread"><h3>${tit} · ${dataBR(P.data)}</h3><button class="btn ghost" id="kl-x">Fechar</button></div><div style="max-height:70vh;overflow:auto">${corpo}</div>`);
+  $('#kl-x').onclick = fechaModal;
+  document.querySelectorAll('[data-kv]').forEach(b => b.onclick = () => { const d = dias.find(y => y.pid === b.dataset.kp); fechaModal(); setTimeout(() => abreParada(d, b.dataset.kv), 50); });
+  const trata = async (id, valor) => {
+    const x = dias.flatMap(d => d.paradas).find(y => y.id === id); if (!x || !x.v) return;
+    const obs = (document.querySelector(`[data-ao="${id}"]`) || {}).value || '';
+    const v = valor ? { status: valor, obs: obs.trim(), por: (auth.currentUser && auth.currentUser.email || '').split('@')[0], em: Date.now() } : deleteField();
+    try { await updateDoc(doc(db, 'dias', P.data, 'visitas', id), { alertaTratado: v }); if (valor) x.v.alertaTratado = v; else delete x.v.alertaTratado; kpiLista('al', dias); toast(valor ? 'Ocorrência encerrada' : 'Ocorrência reaberta'); }
+    catch (e) { toast(erroMsg(e)); }
+  };
+  document.querySelectorAll('[data-at-ok]').forEach(b => b.onclick = () => trata(b.dataset.atOk, 'ok'));
+  document.querySelectorAll('[data-at-ir]').forEach(b => b.onclick = () => trata(b.dataset.atIr, 'irregular'));
+  document.querySelectorAll('[data-at-re]').forEach(b => b.onclick = () => trata(b.dataset.atRe, null));
+  document.querySelectorAll('[data-kprom]').forEach(b => b.onclick = () => { fechaModal(); P.sel = b.dataset.kprom; renderPainel(); window.scrollTo(0, 0); });
 }
 // Toque numa loja do dia: com visita abre fotos/preços; sem visita mostra a loja e a última visita (até 30 dias)
 function abreParada(d, id) {
