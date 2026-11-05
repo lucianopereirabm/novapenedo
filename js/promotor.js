@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-04.6';
+export const VERSAO_APP = '2026-11-05.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -41,7 +41,7 @@ async function ativar(codigo) {
     lsSet('np.usuario', a.usuario);
     lsSet('np.cred', JSON.stringify({ u: a.usuario, c: a.codigo, pid: a.promotorId || '' }));
     lsSet('np.ativNova', '1'); try { localStorage.removeItem('np.aviso'); } catch (e) {} // registra este celular como o aparelho do promotor // o celular fica ativado: depois do "Sair" basta o rosto
-    deleteDoc(doc(db, 'ativacoes', c)).catch(() => {}); // código de uso único
+    // o código continua valendo (fixo) até a gestão desvincular o celular: serve para reativar se o app for apagado
     history.replaceState(null, '', location.pathname);
   } catch (e) {
     msg(e && e.code === 'ativacao' || String(e && e.code).includes('permission') ? 'Código inválido, já usado ou vencido. Peça um novo ao supervisor.' : erroMsg(e));

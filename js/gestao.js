@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-05.5';
+const VERSAO_GESTAO = '2026-11-05.6';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1271,12 +1271,12 @@ function celularCel(p) {
   const ap = (S.aparelhos || {})[p.id];
   if (!ap) return `<button class="btn sm primary" data-at="${h(p.id)}" title="Gera o QR para ativar o celular do promotor">Ativar celular</button>`;
   const quando = t => !t ? '—' : ymd(new Date(t)) === ymd(new Date()) ? 'hoje ' + hm(t) : new Date(t).toLocaleDateString('pt-BR') + ' ' + hm(t);
-  return `<div style="text-align:right;line-height:1.35"><span class="tag ok">📱 Celular ativado</span><div class="muted" style="font-size:11px">${h([ap.modelo, ap.sistema].filter(Boolean).join(' · ') || 'aparelho')}</div><div class="muted" style="font-size:11px">desde ${h(new Date(ap.ativadoEm).toLocaleDateString('pt-BR'))} · visto ${h(quando(ap.visto))}</div></div><button class="btn sm" data-dv="${h(p.id)}" title="Tira o app deste celular; para usar de novo, gere um novo QR">Desvincular</button>`;
+  return `<div style="text-align:right;line-height:1.35"><span class="tag ok">📱 Celular ativado</span><div class="muted" style="font-size:11px">${h([ap.modelo, ap.sistema].filter(Boolean).join(' · ') || 'aparelho')}</div><div class="muted" style="font-size:11px">desde ${h(new Date(ap.ativadoEm).toLocaleDateString('pt-BR'))} · visto ${h(quando(ap.visto))}</div></div><button class="btn sm" data-at="${h(p.id)}" title="Mostra o código fixo / QR do promotor">Código</button><button class="btn sm" data-dv="${h(p.id)}" title="Tira o app deste celular e cancela o código">Desvincular</button>`;
 }
 // Desvincula o celular atual: apaga o registro do aparelho e troca a senha interna (o celular perde o acesso)
 async function desvincularCelular(p) {
   const a = S.acessos[p.id]; const ap = (S.aparelhos || {})[p.id];
-  if (!(await confirma(`Desvincular o celular de ${p.nome.split(' ')[0]}${ap && ap.modelo ? ' (' + ap.modelo + ')' : ''}? O app sai desse celular. Para usar de novo (nele ou em outro), gere um novo QR em "Ativar celular".`, 'Desvincular'))) return;
+  if (!(await confirma(`Desvincular o celular de ${p.nome.split(' ')[0]}${ap && ap.modelo ? ' (' + ap.modelo + ')' : ''}? O app sai desse celular e o código atual deixa de valer. Para usar de novo (nele ou em outro), clique em "Ativar celular": sai um código novo.`, 'Desvincular'))) return;
   try {
     await deleteDoc(doc(db, 'aparelhos', p.id));
     if (a && a.ultAtiv) await deleteDoc(doc(db, 'ativacoes', a.ultAtiv)).catch(() => {});
@@ -1284,19 +1284,20 @@ async function desvincularCelular(p) {
     toast(`Celular de ${p.nome.split(' ')[0]} desvinculado.`, 5000);
   } catch (e) { toast(String(e && e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "aparelhos").' : erroAcesso(e), 7000); }
 }
-// Ativação do celular: código de uso único (vale 24h) em QR; o promotor não precisa saber login nem senha
+// Ativação do celular: código FIXO do promotor (vale até desvincular o celular aqui); o promotor não precisa saber login nem senha
 async function ativarCelular(p) {
   const a = S.acessos[p.id]; if (!a) return toast('Crie o acesso do promotor primeiro (Editar).');
   if (!S.rostos[p.id] && !(await confirma(`${p.nome.split(' ')[0]} ainda não tem foto do rosto cadastrada. Sem a foto, o app abre sem reconhecimento facial. Gerar o QR mesmo assim?`, 'Gerar QR'))) return;
-  const ALF = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const rnd = crypto.getRandomValues(new Uint8Array(8));
-  const cod = Array.from(rnd, x => ALF[x % ALF.length]).join('');
-  const expira = Date.now() + 24 * 3600e3;
-  try { await setDoc(doc(db, 'ativacoes', cod), { usuario: a.usuario, codigo: a.codigo, promotorId: p.id, expira, criado: Date.now() }); setDoc(doc(db, 'acessos', p.id), { ultAtiv: cod }, { merge: true }).catch(() => {}); }
+  const expira = Date.now() + 5 * 365 * 864e5; // fixo: só deixa de valer ao desvincular
+  let cod = null;
+  if (a.ultAtiv) { try { const x = await getDoc(doc(db, 'ativacoes', a.ultAtiv)); if (x.exists() && x.data().usuario === a.usuario && x.data().codigo === a.codigo) cod = a.ultAtiv; } catch (e) {} }
+  if (!cod) { const ALF = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; cod = Array.from(crypto.getRandomValues(new Uint8Array(8)), x => ALF[x % ALF.length]).join(''); }
+  try { await setDoc(doc(db, 'ativacoes', cod), { usuario: a.usuario, codigo: a.codigo, promotorId: p.id, expira, criado: Date.now() }, { merge: true }); if (a.ultAtiv !== cod) await setDoc(doc(db, 'acessos', p.id), { ultAtiv: cod }, { merge: true }).catch(() => {}); }
   catch (e) { return toast(String(e && e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "ativacoes").' : erroMsg(e), 7000); }
   const url = location.origin + location.pathname.replace(/gestao\.html$/, '') + 'index.html#ativar=' + cod;
   const cf = cod.slice(0, 4) + '-' + cod.slice(4);
   abreModal(`<div class="spread"><h3>Ativar celular · ${h(p.nome.split(' ')[0])}</h3><button class="btn ghost" id="qa-x">Fechar</button></div>
-    <p class="muted" style="margin:0;font-size:14px">No celular do promotor, abra a câmera e aponte para o QR (ou abra o app e digite o código). Vale por 24 horas e só uma vez.</p>
+    <p class="muted" style="margin:0;font-size:14px">No celular do promotor, abra a câmera e aponte para o QR (ou abra o app e digite o código). <b>O código é fixo do promotor</b>: se ele sair do app ou apagar o app, usa o mesmo código de novo. Só deixa de valer quando você <b>desvincula</b> o celular aqui.</p>
     <div id="qa-qr" style="display:grid;place-items:center;background:#fff;padding:16px;border-radius:12px"></div>
     <div style="text-align:center;font:800 28px var(--f-body);letter-spacing:.14em" class="num">${cf}</div>
     <div class="row end"><a class="btn" target="_blank" rel="noopener" href="https://wa.me/${(p.telefone || '').replace(/\D/g, '') ? '55' + (p.telefone || '').replace(/\D/g, '') : ''}?text=${encodeURIComponent('Ative o app de rotas da Nova Penedo neste celular: ' + url)}">Enviar pelo WhatsApp</a><button class="btn primary" id="qa-cp">Copiar link</button></div>`);
