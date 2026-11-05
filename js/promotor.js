@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-05.1';
+export const VERSAO_APP = '2026-11-05.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -535,7 +535,9 @@ async function checkout() {
   const V = S.visita; const v = S.vis[V.id];
   const semFoto = ['antes', 'depois'].filter(t => !S.fotos.some(x => x.tipo === t));
   if (semFoto.length) { toast('Para fazer check-out, tire a foto: gôndola ' + semFoto.join(' e ') + '.', 5000); $('#v-fotos').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-  const semPreco = S.pesquisa.filter(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
+  document.querySelectorAll('#v-pp [data-pq]').forEach(inp => salvaPreco(inp, false)); // grava o que foi digitado e ainda não foi salvo
+  const v2 = S.vis[V.id] || v;
+  const semPreco = S.pesquisa.filter(q => !precoRespondido((v2.precos || {})[chaveQ(q)]));
   if (semPreco.length) { toast('Preencha a pesquisa de preço: ' + semPreco.join(', ') + '.', 6000); $('#v-pp').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   const b = $('#b-out'); if (b) { b.disabled = true; b.textContent = 'Pegando o GPS…'; }
   let gps = null, dist = null;
@@ -595,11 +597,30 @@ function salvaFotos(lista) {
 const chaveQ = q => q.replace(/[.~*/\[\]]/g, '_');
 const precoRespondido = x => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0));
 const brl2 = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Lê o campo de preço e grava (só se mudou). avancar = leva para o próximo item.
+function salvaPreco(inp, avancar) {
+  if (!S.visita || !S.vis[S.visita.id]) return;
+  const q = S.pesquisa[+inp.dataset.pq]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)];
+  const t = inp.value.trim(); const n = t ? +t.replace(/\./g, '').replace(',', '.') : null;
+  if (n == null) { if (atual && !atual.falta) atualiza({ precos: { [q]: null } }); return; }
+  if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
+  const val = Math.round(n * 100) / 100;
+  if (!(atual && atual.preco === val)) atualiza({ precos: { [q]: { preco: val, ts: Date.now() } } });
+  if (avancar) proximoPasso();
+}
 function renderPesquisa(v) {
   const box = $('#v-pp');
   { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)])).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
-  const ae = document.activeElement; if (ae && ae.tagName === 'INPUT' && box.contains(ae)) return; // não atrapalha quem está digitando
   const resp = v.precos || {}; const pode = v.status === 'em_loja';
+  // já montado para esta visita: só atualiza no lugar (não recria os campos — senão perde o que está sendo digitado)
+  const chave = (S.visita && S.visita.id) + '|' + S.pesquisa.join('|');
+  if (box.dataset.k === chave) {
+    S.pesquisa.forEach((q, i) => { const x = resp[chaveQ(q)] || {}; const inp = box.querySelector(`[data-pq="${i}"]`), bt = box.querySelector(`[data-pf="${i}"]`); if (!inp) return;
+      if (document.activeElement !== inp) { const novo = typeof x.preco === 'number' ? brl2(x.preco) : (x.falta ? '' : inp.value); if (inp.value !== novo) inp.value = novo; }
+      inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode; });
+    return;
+  }
+  box.dataset.k = chave;
   box.innerHTML = S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
       <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
@@ -608,15 +629,11 @@ function renderPesquisa(v) {
   $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`;
   box.querySelectorAll('[data-pq]').forEach(inp => {
     // máscara de dinheiro: digita só os números e a vírgula entra sozinha (4 → 0,04; 46 → 0,46; 460 → 4,60)
-    inp.oninput = () => { const d = inp.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 5); inp.value = d ? brl2(+d / 100) : ''; };
-    inp.onchange = () => {
-      const q = S.pesquisa[+inp.dataset.pq]; const t = inp.value.trim().replace(/\./g, ',');
-      if (!t) { atualiza({ precos: { [q]: null } }); return; }
-      const n = +t.replace(/,(?=.*,)/g, '').replace(',', '.');
-      if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
-      const prox = S.pesquisa.findIndex((x, k) => k !== +inp.dataset.pq && !precoRespondido(((S.vis[S.visita.id].precos || {})[chaveQ(x)]))); if (prox < 0) inp.blur();
-      atualiza({ precos: { [q]: { preco: Math.round(n * 100) / 100, ts: Date.now() } } }); proximoPasso();
-    };
+    // grava enquanto digita (o iPhone não avisa "change" quando a máscara reescreve o campo)
+    let t0 = null;
+    inp.oninput = () => { const d = inp.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 5); inp.value = d ? brl2(+d / 100) : ''; clearTimeout(t0); t0 = setTimeout(() => salvaPreco(inp, false), 900); };
+    inp.onchange = inp.onblur = () => { clearTimeout(t0); salvaPreco(inp, true); };
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
   });
   box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
     const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
