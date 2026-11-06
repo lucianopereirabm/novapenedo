@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-06.3';
+const VERSAO_GESTAO = '2026-11-06.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -319,12 +319,23 @@ async function carregaMes(mes) {
   }));
   D.carregando = false; D.ok = true; D.em = Date.now(); return D;
 }
+// Divide as horas trabalhadas do dia: em loja (check-in → check-out, sem o almoço) e deslocamento (o resto da jornada)
+function divideJornada(J, vs, j) {
+  if (!J.tem) return { loja: 0, desl: 0 };
+  const ag = Date.now();
+  let iv = vs.filter(v => v.checkin && v.status !== 'nao_visitada').map(v => [Math.max(v.checkin, J.inicio), Math.min(v.checkout || (J.andamento && v.status === 'em_loja' ? ag : v.checkin), J.fim)]).filter(x => x[1] > x[0]).sort((a, b) => a[0] - b[0]);
+  const m = []; iv.forEach(x => { const u = m[m.length - 1]; if (u && x[0] <= u[1]) u[1] = Math.max(u[1], x[1]); else m.push(x.slice()); });
+  let loja = m.reduce((t, x) => t + (x[1] - x[0]), 0);
+  if (J.almocoMarcado && j && j.almocoInicio) { const a0 = j.almocoInicio, a1 = j.almocoFim || ag; m.forEach(x => { loja -= Math.max(0, Math.min(x[1], a1) - Math.max(x[0], a0)); }); }
+  loja = Math.min(J.trabalhado, Math.max(0, Math.round(loja / 60000)));
+  return { loja, desl: J.trabalhado - loja };
+}
 function resumoMes(D, mes) {
   const hoje = ymd(new Date()); const regras = regrasJornada(S.empresa);
   const ids = new Set(S.promotores.filter(p => p.ativo !== false).map(p => p.id));
   Object.values(D.vis).forEach(m => Object.values(m).forEach(v => ids.add(v.promotorId)));
   return [...ids].map(pid => {
-    const R = { pid, dias: [], trab: 0, prev: 0, saldo: 0, diasTrab: 0, faltas: 0, prog: 0, feitas: 0, nao: 0, semVisita: 0, fora: 0, alertas: 0, andamento: null };
+    const R = { pid, dias: [], loja: 0, desl: 0, trab: 0, prev: 0, saldo: 0, diasTrab: 0, faltas: 0, prog: 0, feitas: 0, nao: 0, semVisita: 0, fora: 0, alertas: 0, andamento: null };
     diasDoMes(mes).forEach(d => {
       if (emTeste(pid, d)) return; // período de teste: não entra no banco de horas, faltas e rotas
       const lojas = lojasDoDia(pid, d); const m = D.vis[d] || {};
@@ -336,16 +347,18 @@ function resumoMes(D, mes) {
       const sem = d < hoje ? lojas.filter(l => !m[l.id + '_' + pid]) : [];
       const al = vs.filter(([, v]) => alertaAberto(v)).length;
       const J = calcJornada({ j: (D.jor[d] || {})[pid], vs: vs.map(([, v]) => v), date: d, regras, hoje });
+      const DV = divideJornada(J, vs.map(([, v]) => v), (D.jor[d] || {})[pid]); J.loja = DV.loja; J.desl = DV.desl;
       const falta = !J.tem && d < hoje && lojas.length > 0 && J.esperado > 0 && !vs.some(([, v]) => v.status === 'nao_visitada');
       if (!lojas.length && !vs.length && !J.tem) return;
       R.dias.push({ d, lojas: lojas.length, feitas, nao, fora, sem, al, J, falta });
       R.prog += lojas.length; R.feitas += feitas; R.nao += nao; R.fora += fora; R.semVisita += sem.length; R.alertas += al;
-      if (J.tem) { R.diasTrab++; if (J.andamento || d === hoje) R.andamento = J; else { R.trab += J.trabalhado; R.prev += J.esperado; R.saldo += J.saldo; } }
+      if (J.tem) { R.diasTrab++; if (J.andamento || d === hoje) R.andamento = J; else { R.trab += J.trabalhado; R.loja += J.loja; R.desl += J.desl; R.prev += J.esperado; R.saldo += J.saldo; } }
       if (falta) R.faltas++;
     });
     return R;
   }).filter(R => R.dias.length).sort((a, b) => promNome(a.pid).localeCompare(promNome(b.pid)));
 }
+const partes = (v, tot, hoje, desl) => `${hmin(v)} <span class="muted">${tot ? Math.round(v / tot * 100) : 0}%</span>${hoje != null && hoje !== false ? `<div class="muted" style="font-size:11px">+ hoje ${hmin(hoje)}</div>` : ''}`;
 async function renderMes() {
   const box = $('#p-corpo'); box.dataset.modo = 'mes'; tiraMapa();
   const [y, m] = P.mes.split('-').map(Number); const nomeMes = new Date(y, m - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
@@ -360,12 +373,12 @@ async function renderMes() {
   const T = RS.reduce((t, r) => ({ prog: t.prog + r.prog, feitas: t.feitas + r.feitas, nao: t.nao + r.nao, sem: t.sem + r.semVisita, saldo: t.saldo + r.saldo, faltas: t.faltas + r.faltas, al: t.al + r.alertas }), { prog: 0, feitas: 0, nao: 0, sem: 0, saldo: 0, faltas: 0, al: 0 });
   $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas (${T.prog ? Math.round(T.feitas / T.prog * 100) : 0}%)</span></div><div class="kpi"><b style="color:var(--crit)">${T.sem + T.nao}</b><span>Lojas sem visita (${T.nao} com motivo)</span></div><div class="kpi"><b style="color:${T.faltas ? 'var(--crit)' : 'inherit'}">${T.faltas}</b><span>Dias com rota sem jornada</span></div><div class="kpi"><b style="color:${T.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(T.saldo)}</b><span>Banco de horas da equipe</span></div></div>`;
   if (P.selMes && RS.some(r => r.pid === P.selMes)) return renderMesPromotor(RS.find(r => r.pid === P.selMes), nomeMes);
-  box.innerHTML = `<div class="card" style="padding:0"><div class="table-wrap"><table class="num mes"><thead><tr><th>Promotor</th><th class="r">Dias trab.</th><th class="r">Faltas</th><th class="r">Horas trab.</th><th class="r">Previstas</th><th class="r">Banco de horas</th><th class="r">Visitas</th><th class="r">Não visitadas</th><th class="r">Sem registro</th><th class="r">Fora da rota</th><th class="r">Alertas</th></tr></thead><tbody>
-    ${RS.map(r => `<tr class="click" data-pm="${h(r.pid)}"><td><div class="row" style="gap:8px;flex-wrap:nowrap">${avatar(r.pid, 30)}<b>${h(nomeCurto(r.pid))}</b></div></td><td class="r">${r.diasTrab}</td><td class="r" style="color:${r.faltas ? 'var(--crit)' : 'inherit'}">${r.faltas || '—'}</td><td class="r">${hmin(r.trab)}</td><td class="r">${hmin(r.prev)}</td>
+  box.innerHTML = `<div class="card" style="padding:0"><div class="table-wrap"><table class="num mes"><thead><tr><th>Promotor</th><th class="r">Dias trab.</th><th class="r">Faltas</th><th class="r">Horas trab.</th><th class="r">Em loja</th><th class="r">Deslocamento</th><th class="r">Previstas</th><th class="r">Banco de horas</th><th class="r">Visitas</th><th class="r">Não visitadas</th><th class="r">Sem registro</th><th class="r">Fora da rota</th><th class="r">Alertas</th></tr></thead><tbody>
+    ${RS.map(r => `<tr class="click" data-pm="${h(r.pid)}"><td><div class="row" style="gap:8px;flex-wrap:nowrap">${avatar(r.pid, 30)}<b>${h(nomeCurto(r.pid))}</b></div></td><td class="r">${r.diasTrab}</td><td class="r" style="color:${r.faltas ? 'var(--crit)' : 'inherit'}">${r.faltas || '—'}</td><td class="r"><b>${hmin(r.trab)}</b></td><td class="r">${partes(r.loja, r.trab, r.andamento && r.andamento.loja)}</td><td class="r">${partes(r.desl, r.trab, r.andamento && r.andamento.desl, true)}</td><td class="r">${hmin(r.prev)}</td>
       <td class="r"><b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b>${r.andamento ? `<div class="muted" style="font-size:11px">+ hoje ${hmin(r.andamento.trabalhado)} em andamento</div>` : ''}</td>
       <td class="r">${r.feitas}/${r.prog} <span class="muted">${r.prog ? Math.round(r.feitas / r.prog * 100) : 0}%</span></td><td class="r">${r.nao || '—'}</td><td class="r" style="color:${r.semVisita ? 'var(--crit)' : 'inherit'}">${r.semVisita || '—'}</td><td class="r">${r.fora || '—'}</td><td class="r" style="color:${r.alertas ? 'var(--crit)' : 'inherit'}">${r.alertas || '—'}</td></tr>`).join('')}
     </tbody></table></div></div>
-    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos 1h de almoço nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). Jornada = do check-in da primeira loja ao check-out da última. O dia de hoje entra no saldo quando o promotor sai da última loja. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos 1h de almoço nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). Em loja = do check-in ao check-out de cada loja (sem o almoço marcado); Deslocamento = o restante da jornada, entre uma loja e outra. Jornada = do check-in da primeira loja ao check-out da última. O dia de hoje entra no saldo quando o promotor sai da última loja. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
     <button class="btn sm" id="m-csv">Baixar planilha do mês</button></div>`;
   box.querySelectorAll('[data-pm]').forEach(tr => tr.onclick = () => { P.selMes = tr.dataset.pm; renderPainel(); });
   $('#m-csv').onclick = () => csvMes(RS, nomeMes);
@@ -373,11 +386,11 @@ async function renderMes() {
 function renderMesPromotor(r, nomeMes) {
   const box = $('#p-corpo');
   box.innerHTML = `<div class="stack"><div class="row" style="gap:12px;flex-wrap:wrap"><button class="btn sm" id="pm-volta">‹ Todos</button>${avatar(r.pid, 48)}<div><h3 style="margin:0;font-size:20px">${h(promNome(r.pid))}</h3>
-      <div class="muted num" style="font-size:13px">${nomeMes} · ${r.diasTrab} dias trabalhados · ${hmin(r.trab)} trabalhadas de ${hmin(r.prev)} previstas · banco de horas <b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b> · visitas ${r.feitas}/${r.prog}${r.faltas ? ` · <span style="color:var(--crit)">${r.faltas} falta(s)</span>` : ''}</div></div></div>
-    <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Data</th><th>Jornada</th><th class="r">Trabalhado</th><th class="r">Previsto</th><th class="r">Saldo</th><th class="r">Visitas</th><th>Sem visita</th><th class="r">Alertas</th></tr></thead><tbody>
+      <div class="muted num" style="font-size:13px">${nomeMes} · ${r.diasTrab} dias trabalhados · ${hmin(r.trab)} trabalhadas (${hmin(r.loja)} em loja · ${hmin(r.desl)} de deslocamento) de ${hmin(r.prev)} previstas · banco de horas <b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b> · visitas ${r.feitas}/${r.prog}${r.faltas ? ` · <span style="color:var(--crit)">${r.faltas} falta(s)</span>` : ''}</div></div></div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Data</th><th>Jornada</th><th class="r">Trabalhado</th><th class="r">Em loja</th><th class="r">Deslocamento</th><th class="r">Previsto</th><th class="r">Saldo</th><th class="r">Visitas</th><th>Sem visita</th><th class="r">Alertas</th></tr></thead><tbody>
     ${r.dias.map(x => { const J = x.J; return `<tr class="click" data-dd="${x.d}"><td><b>${x.d.slice(8)}/${x.d.slice(5, 7)}</b> <span class="muted">${DIAS[J.wd]}</span></td>
       <td>${x.falta ? '<span class="tag no">sem jornada</span>' : J.tem ? `${hm(J.inicio)}–${J.andamento ? 'agora' : hm(J.fim) + (J.fimEst ? '*' : '')}` : '—'}</td>
-      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}${J.tem && J.almoco ? `<div class="muted" style="font-size:11px">almoço ${J.almocoMarcado ? hm(J.almocoIni) + '–' + (J.almocoFim ? hm(J.almocoFim) : '?') : '1h (padrão)'}</div>` : ''}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento && x.d !== ymd(new Date()) ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento && x.d !== ymd(new Date()) ? saldoTxt(J.saldo) : J.tem ? 'hoje, em andamento' : '—'}</td>
+      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}${J.tem && J.almoco ? `<div class="muted" style="font-size:11px">almoço ${J.almocoMarcado ? hm(J.almocoIni) + '–' + (J.almocoFim ? hm(J.almocoFim) : '?') : '1h (padrão)'}</div>` : ''}</td><td class="r">${J.tem ? hmin(J.loja) : '—'}</td><td class="r">${J.tem ? hmin(J.desl) : '—'}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento && x.d !== ymd(new Date()) ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento && x.d !== ymd(new Date()) ? saldoTxt(J.saldo) : J.tem ? 'hoje, em andamento' : '—'}</td>
       <td class="r">${x.feitas}/${x.lojas}${x.fora ? ` <span class="muted">+${x.fora}</span>` : ''}</td>
       <td style="font-size:12.5px">${x.nao ? `<span class="tag">${x.nao} com motivo</span> ` : ''}${x.sem.length ? `<span style="color:var(--crit)">${x.sem.map(l => h(l.nome)).join(', ')}</span>` : (x.nao ? '' : '—')}</td>
       <td class="r" style="color:${x.al ? 'var(--crit)' : 'inherit'}">${x.al || '—'}</td></tr>`; }).join('')}
@@ -387,9 +400,9 @@ function renderMesPromotor(r, nomeMes) {
   box.querySelectorAll('[data-dd]').forEach(tr => tr.onclick = () => { P.modo = 'dia'; lsSet('np.p.modo', 'dia'); P.data = tr.dataset.dd; $('#p-data').value = P.data; P.sel = r.pid; box.dataset.modo = ''; assinaPainel(); renderPainel(); window.scrollTo(0, 0); });
 }
 function csvMes(RS, nomeMes) {
-  const L = [['Promotor', 'Data', 'Dia', 'Início', 'Fim', 'Trabalhado (h)', 'Previsto (h)', 'Saldo (h)', 'Visitas feitas', 'Programadas', 'Não visitadas', 'Sem registro', 'Fora da rota', 'Alertas', 'Observação']];
+  const L = [['Promotor', 'Data', 'Dia', 'Início', 'Fim', 'Trabalhado (h)', 'Em loja (h)', 'Deslocamento (h)', 'Previsto (h)', 'Saldo (h)', 'Visitas feitas', 'Programadas', 'Não visitadas', 'Sem registro', 'Fora da rota', 'Alertas', 'Observação']];
   const hh = m => (m / 60).toFixed(2).replace('.', ',');
-  RS.forEach(r => r.dias.forEach(x => { const J = x.J; L.push([promNome(r.pid), x.d.split('-').reverse().join('/'), DIAS[J.wd], J.tem ? hm(J.inicio) : '', J.tem && !J.andamento ? hm(J.fim) : '', J.tem ? hh(J.trabalhado) : '', hh(J.esperado), J.tem && !J.andamento ? hh(J.saldo) : '', x.feitas, x.lojas, x.nao, x.sem.length, x.fora, x.al, (x.falta ? 'Sem jornada com rota. ' : '') + (J.fimEst ? 'Sem check-out na última loja.' : '') + (J.andamento ? 'Em andamento.' : '')]); }));
+  RS.forEach(r => r.dias.forEach(x => { const J = x.J; L.push([promNome(r.pid), x.d.split('-').reverse().join('/'), DIAS[J.wd], J.tem ? hm(J.inicio) : '', J.tem && !J.andamento ? hm(J.fim) : '', J.tem ? hh(J.trabalhado) : '', J.tem ? hh(J.loja) : '', J.tem ? hh(J.desl) : '', hh(J.esperado), J.tem && !J.andamento ? hh(J.saldo) : '', x.feitas, x.lojas, x.nao, x.sem.length, x.fora, x.al, (x.falta ? 'Sem jornada com rota. ' : '') + (J.fimEst ? 'Sem check-out na última loja.' : '') + (J.andamento ? 'Em andamento.' : '')]); }));
   const txt = '﻿' + L.map(l => l.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = `Jornada e visitas ${P.mes}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
