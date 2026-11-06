@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-06.2';
+const VERSAO_GESTAO = '2026-11-06.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -253,6 +253,7 @@ function renderPainel() {
         <div class="num cont"><b>${d.feitas}</b><span>/${d.programadas}</span></div></div>
       ${estrada(d)}
       <div class="ultimo">${ultimoEvento(d)}</div>
+      ${deslCard(d)}
       <div class="spread muted num" style="font-size:12px"><span>${jornadaTxt(d.J)}</span><span>${pct}%${d.extras ? ` · +${d.extras} fora` : ''}${d.nao ? ` · <span style="color:var(--crit)">${d.nao} não visit.</span>` : ''}${d.alertas ? ` · <span style="color:var(--crit)">⚠ ${d.alertas}</span>` : ''}</span></div></button>`;
   }).join('');
   $('#p-cards').querySelectorAll('[data-p]').forEach(b => b.onclick = () => abreDetalhe(b.dataset.p));
@@ -278,6 +279,21 @@ function ultimoEvento(d) {
   if (jr && jr.almocoFim) ev.push({ t: jr.almocoFim, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Voltou do almoço às ${hm(jr.almocoFim)} · ${hmin((jr.almocoFim - jr.almocoInicio) / 60000)}` });
   if (!ev.length) return '<span class="muted">Aguardando o primeiro check-in</span>';
   return ev.sort((a, b) => b.t - a.t)[0].html;
+}
+// Resumo do deslocamento entre lojas no cartão da visão geral
+function deslCard(d) {
+  const vs = d.paradas.filter(x => x.v && x.v.checkin && x.v.status !== 'nao_visitada').sort((a, b) => a.v.checkin - b.v.checkin);
+  const tr = [];
+  for (let i = 1; i < vs.length; i++) { const a = vs[i - 1], b = vs[i]; if (a.v.checkout && a.v.checkout <= b.v.checkin) tr.push({ de: a, para: b, min: Math.round((b.v.checkin - a.v.checkout) / 60000) }); }
+  const ult = vs[vs.length - 1];
+  const emTransito = ult && ult.v.checkout && d.J.andamento && vs.length < d.paradas.filter(x => x.v ? x.v.status !== 'nao_visitada' : true).length;
+  if (!tr.length && !emTransito) return '';
+  const tot = tr.reduce((s, t) => s + t.min, 0);
+  const partes = [];
+  if (tr.length) partes.push(`<b>${hmin(tot)}</b> entre lojas (${tr.length} trecho${tr.length > 1 ? 's' : ''})`);
+  if (emTransito) partes.push(`<span style="color:var(--warn,#C77700)">a caminho desde ${hm(ult.v.checkout)} · ${hmin(Math.round((Date.now() - ult.v.checkout) / 60000))}</span>`);
+  else if (tr.length) { const t = tr[tr.length - 1]; partes.push(`último: ${h(t.de.nome)} → ${h(t.para.nome)} <b>${hmin(t.min)}</b>`); }
+  return `<div class="desl-card muted num">🚌 ${partes.join(' · ')}</div>`;
 }
 function jornadaTxt(J) {
   if (!J.tem) return 'Jornada não iniciada';
