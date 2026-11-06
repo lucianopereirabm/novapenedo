@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-06.1';
+const VERSAO_GESTAO = '2026-11-06.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -494,7 +494,8 @@ function mapaGeral(dias) {
 }
 function renderDetalhe(d) {
   const box = $('#p-corpo');
-  const linhas = d.paradas.map(x => {
+  const conectores = conexoesDia(d);
+  const linhas = d.paradas.map((x, ix) => (conectores[ix] || '') + (() => {
     const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">Não visitada</span>` : '<span class="pill live">Em loja</span>';
     const al = !v || v.status === 'nao_visitada' ? (v ? `<span class="muted" style="font-size:12px">${h(v.motivo)}</span>` : '') :
       [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${foraLoja(v) ? 'no' : ''}">${foraLoja(v) ? '⚠️ fora da loja · ' : ''}${v.distIn} m${v.localAprox ? ' (aprox.)' : ''}</span>` : ''].join(' ');
@@ -502,7 +503,7 @@ function renderDetalhe(d) {
     return `<button class="parada ${cls}" data-v="${h(x.id)}"><span class="pa-n">${x.extra ? '+' : x.ordem}</span>
       <span class="pa-t"><b>${h(x.nome)}</b><span class="muted">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</span>${al.trim() ? `<span class="pa-c">${al}</span>` : ''}</span>
       <span class="pa-s">${st}<span class="num muted">${v && v.checkin ? hm(v.checkin) + '–' + (v.checkout ? hm(v.checkout) : '…') + (v.checkout ? ' · ' + dur(v.checkin, v.checkout) : '') : ''}</span>${v && v.status !== 'nao_visitada' ? '<span class="pa-f">📷 fotos e preços ›</span>' : ''}</span></button>`;
-  }).join('');
+  })()).join('');
   if (box.dataset.modo !== 'det') {
     box.dataset.modo = 'det'; tiraMapa();
     box.innerHTML = `<div class="stack"><div id="p-dhead"></div><div id="p-daviso"></div><div id="p-dest"></div>
@@ -511,14 +512,14 @@ function renderDetalhe(d) {
       <div class="stack" style="gap:6px"><h3 style="margin:4px 0 0">Mapa da rota</h3><div id="mapa" class="mapa-det"></div><div class="row" style="gap:8px;font-size:12px" id="p-dgeo"></div></div>
       <div class="muted" style="font-size:12px">Mapa: números = ordem da rota do dia (verde concluída, laranja em loja, branco pendente, vermelho não visitada ou com alerta); tracejado = rota planejada; linha verde = caminho feito pelos check-ins (pontinhos). Lojas com ponto aproximado (pelo endereço) aparecem com borda tracejada. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
   }
-  $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
+  $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap;min-width:0;max-width:100%"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div style="min-width:0"><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
       <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div><div class="muted num" style="font-size:13px;margin-top:2px">${jornadaTxt(d.J)}${d.J.tem && d.J.almocoMarcado ? ` · almoço ${hm(d.J.almocoIni)}–${d.J.almocoFim ? hm(d.J.almocoFim) : 'agora'} (${hmin(((d.J.almocoFim || Date.now()) - d.J.almocoIni) / 60000)})${d.J.almocoFim && (d.J.almocoFim - d.J.almocoIni) < 3600000 && d.J.bruto > 360 ? ' <span style="color:var(--crit)">menos de 1h</span>' : ''}` : d.J.tem && d.J.almoco ? ' · almoço não marcado: 1h descontada' : ''}${d.J.fimEst ? ' · * ficou sem check-out na última loja; contado até a última entrada' : ''}</div></div></div>
       <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>`;
   $('#p-dest').innerHTML = estrada(d);
   { const hoje = P.data === ymd(new Date()); const a = $('#p-daviso');
     a.innerHTML = hoje && d.programadas && !d.primeira && !(d.nao) ? `<div class="note warn"><b>⏰ Ainda não iniciou a rota</b> · nenhum check-in até ${hm(Date.now())}${d.J.atencao ? '' : ` (início previsto ${regrasJornada(S.empresa).inicioPrevisto})`}.</div>`
       : d.J.atencao ? `<div class="note warn"><b>⚠ ${h(d.J.atencao)}</b></div>` : ''; }
-  $('#p-dtab').innerHTML = linhas;
+  $('#p-dtab').innerHTML = linhas; preencheConexoes();
   $('#p-volta').onclick = () => { P.sel = ''; renderPainel(); };
   $('#p-outro').onchange = e => { P.sel = e.target.value; renderPainel(); };
   $('#p-dtab').querySelectorAll('[data-v]').forEach(b => b.onclick = () => abreParada(d, b.dataset.v));
@@ -537,6 +538,34 @@ async function trajeto(a, b) {
   return ROTAS[k] = { km, min: km / 40 * 60, est: true };
 }
 const kmTxt = t => `${t.km.toFixed(1).replace('.', ',')} km · ~${Math.round(t.min)} min${t.est ? ' (estimado)' : ''}`;
+// Deslocamento entre as lojas do dia (na lista do detalhe): tempo real (saída → chegada) e distância
+function conexoesDia(d) {
+  const out = {}; const ps = d.paradas;
+  const visit = ps.filter(x => x.v && x.v.checkin && x.v.status !== 'nao_visitada');
+  ps.forEach((x, ix) => {
+    if (ix === 0 && !x.v) return;
+    let de = null, real = null;
+    if (x.v && x.v.checkin && x.v.status !== 'nao_visitada') { // veio da visita anterior no tempo
+      de = visit.filter(y => y !== x && y.v.checkout && y.v.checkout <= x.v.checkin).sort((a, b) => b.v.checkout - a.v.checkout)[0];
+      if (de) real = Math.round((x.v.checkin - de.v.checkout) / 60000);
+      else return; // primeira loja do dia: o trajeto de casa aparece no quadro de deslocamento
+    } else de = ps[ix - 1];
+    if (!de) return;
+    const pa = de.v && de.v.gpsOut ? [de.v.gpsOut.lat, de.v.gpsOut.lng] : de.v && de.v.gpsIn ? [de.v.gpsIn.lat, de.v.gpsIn.lng] : pontoLoja(S.lojas.find(l => l.id === de.lojaId) || {});
+    const pb = x.v && x.v.gpsIn ? [x.v.gpsIn.lat, x.v.gpsIn.lng] : pontoLoja(S.lojas.find(l => l.id === x.lojaId) || {});
+    const alvo = pa && pb ? `data-cx="${pa.join(',')};${pb.join(',')}"` : '';
+    const lento = real != null && real > 60;
+    out[ix] = `<div class="conx${lento ? ' lento' : ''}" ${alvo}><span class="cx-l">🚌</span><span>${real != null ? `<b>${hmin(real)}</b> de deslocamento · saiu da ${h(de.nome)} às ${hm(de.v.checkout)}, chegou às ${hm(x.v.checkin)}` : `próxima loja · vindo da ${h(de.nome)}`}<span class="cx-km muted">${alvo ? ' · calculando distância…' : ''}</span></span></div>`;
+  });
+  return out;
+}
+async function preencheConexoes() {
+  for (const el of document.querySelectorAll('#p-dtab .conx[data-cx]')) {
+    const [a, b] = el.dataset.cx.split(';').map(t => t.split(',').map(Number));
+    const t = await trajeto(a, b); const k = el.querySelector('.cx-km'); if (!k) continue;
+    k.textContent = ` · ${t.km.toFixed(1).replace('.', ',')} km${t.est ? ' (estimado)' : ''} · ~${Math.round(t.min)} min de carro`;
+  }
+}
 async function deslocamento(d) {
   const el = $('#p-ddesl'); if (!el) return;
   const p = S.promotores.find(x => x.id === d.pid) || {};

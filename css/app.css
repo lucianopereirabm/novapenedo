@@ -297,3 +297,11 @@ body.so-leitura #p-geo-b, body.so-leitura #p-dgeo-b, body.so-leitura #md-local {
 
 .kpi.kbtn{text-align:left;cursor:pointer;color:inherit;font:inherit;display:flex;flex-direction:column}
 .kpi.kbtn:hover{border-color:var(--brand-y);box-shadow:0 2px 8px rgba(0,0,0,.06)}
+
+/* deslocamento entre lojas na lista do detalhe */
+.conx{display:flex;gap:8px;align-items:flex-start;margin:0 4px 0 13px;padding:6px 0 6px 18px;border-left:2px dashed var(--line);font-size:12px;color:var(--muted)}
+.conx b{color:var(--ink)}
+.conx.lento{border-left-color:#F2994A}.conx.lento b{color:#B86A00}
+.conx .cx-l{font-size:13px}
+
+#p-dhead .pill{max-width:100%;white-space:normal}
