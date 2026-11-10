@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-10.5';
+const VERSAO_GESTAO = '2026-11-10.6';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -162,7 +162,7 @@ function diaDoPromotor(pid) {
   const lojas = lojasDoDia(pid, P.data);
   const paradas = lojas.map((l, i) => ({ ordem: i + 1, lojaId: l.id, nome: l.nome, codigo: l.codigo, bairro: l.bairro || l.municipio || '', id: l.id + '_' + pid, v: P.vis[l.id + '_' + pid] }));
   Object.entries(P.vis).filter(([k, v]) => v.promotorId === pid && !paradas.some(x => x.id === k))
-    .forEach(([k, v]) => paradas.push({ ordem: null, lojaId: v.lojaId, nome: v.lojaNome, codigo: v.codigo, bairro: v.cidade || '', id: k, v, extra: true }));
+    .forEach(([k, v]) => paradas.push({ ordem: null, lojaId: v.lojaId, nome: v.lojaNome + (v.visitaN > 1 ? ` · ${v.visitaN}ª visita` : ''), codigo: v.codigo, bairro: v.cidade || '', id: k, v, extra: true }));
   const vs = paradas.filter(x => x.v);
   const feitas = paradas.filter(x => !x.extra && x.v && x.v.status === 'concluida').length;
   const extras = paradas.filter(x => x.extra && x.v && x.v.status !== 'nao_visitada').length;

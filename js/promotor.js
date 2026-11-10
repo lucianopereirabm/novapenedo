@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-10.3';
+export const VERSAO_APP = '2026-11-10.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -356,6 +356,9 @@ const wdHoje = () => diaSemana(S.hoje);
 function posDia(l, wd) { const o = l.ordemDia && l.ordemDia[wd]; return typeof o === 'number' ? o : 1000 + (l.ordem || 999); }
 const lojasHoje = () => S.lojas.filter(l => (l.dias || []).map(Number).includes(wdHoje())).sort((a, b) => posDia(a, wdHoje()) - posDia(b, wdHoje()));
 const vid = lojaId => lojaId + '_' + S.pid;
+// visitas de hoje numa loja (a 1ª usa o id normal; a 2ª em diante: loja~2_promotor, loja~3_promotor…)
+const visitasDaLoja = lojaId => Object.entries(S.vis).filter(([, v]) => v.lojaId === lojaId);
+const idVisitaN = (lojaId, n) => n > 1 ? `${lojaId}~${n}_${S.pid}` : vid(lojaId);
 const endereco = l => [l.endereco, l.bairro, l.municipio].filter(Boolean).join(', ');
 function statusPill(v) {
   if (!v) return '<span class="pill pend">Pendente</span>';
@@ -367,7 +370,7 @@ function render() {
   if ($('#v-rota').hidden) return;
   const c = $('#v-rota'); const lojas = lojasHoje();
   const feitas = lojas.filter(l => { const v = S.vis[vid(l.id)]; return v && v.status !== 'em_loja'; }).length;
-  const extras = Object.values(S.vis).filter(v => v.foraRota);
+  const extras = Object.entries(S.vis).filter(([k, v]) => v.foraRota || k !== vid(v.lojaId)).sort((a, b) => (a[1].checkin || 0) - (b[1].checkin || 0));
   let html = `<div><div class="label">Rota de ${DIAS_LONGO[wdHoje()]} · ${S.hoje.split('-').reverse().slice(0, 2).join('/')}</div><h2 class="num">${feitas} de ${lojas.length} lojas</h2></div>
     <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}`;
   if (!lojas.length) html += `<div class="empty"><b>Sem lojas para hoje</b>Nenhuma loja está marcada para ${DIAS_LONGO[wdHoje()]} na sua rota.</div>`;
@@ -375,7 +378,7 @@ function render() {
     const v = S.vis[vid(l.id)]; const cls = v ? (v.status === 'em_loja' ? 'live' : v.status === 'concluida' ? 'done' : '') : '';
     return `<button class="stop ${cls}" data-loja="${h(l.id)}"><span class="n num">${i + 1}</span><span class="t"><b>${h(l.nome)}</b><span>${h(l.codigo || '')} · ${h(l.bairro || l.cidade || '')}</span></span>${statusPill(v)}</button>`;
   }).join('') + '</div>';
-  if (extras.length) html += '<div class="label">Fora da rota</div><div class="stops">' + extras.map(v => `<button class="stop" data-loja="${h(v.lojaId)}" data-fora="1"><span class="n">+</span><span class="t"><b>${h(v.lojaNome)}</b><span>${h(v.cidade || '')}</span></span>${statusPill(v)}</button>`).join('') + '</div>';
+  if (extras.length) html += '<div class="label">Fora da rota e visitas extras</div><div class="stops">' + extras.map(([k, v]) => `<button class="stop" data-loja="${h(v.lojaId)}" data-fora="1" data-vid="${h(k)}"><span class="n">+</span><span class="t"><b>${h(v.lojaNome)}${v.visitaN > 1 ? ` · ${v.visitaN}ª visita` : ''}</b><span>${h(v.cidade || '')}</span></span>${statusPill(v)}</button>`).join('') + '</div>';
   html += `<button class="btn" id="b-fora">Visitar loja fora da rota de hoje</button><button class="btn" id="b-var">💰 Minha variável</button>`;
   html += `<p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
   const trava = almocoTravado();
@@ -389,7 +392,7 @@ function render() {
   }
   c.innerHTML = html;
   if (trava) return;
-  c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora));
+  c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora, b.dataset.vid));
   $('#b-fora').onclick = buscaFora; $('#b-var').onclick = () => minhaVariavel();
 }
 /* ---------- minha variável (liberada pela gestão: só a do próprio promotor) ---------- */
@@ -463,19 +466,29 @@ async function buscaFora() {
     const q = semAcento($('#bf-q').value.trim()); const box = $('#bf-r'); if (!box) return;
     if (q.length < 2) { box.innerHTML = '<span class="muted">Digite pelo menos 2 letras ou o código.</span>'; return; }
     const it = S.todas.filter(l => !l.bloqueado && semAcento([l.codigo, l.nome, l.razao, l.bairro, l.municipio].join(' ')).includes(q)).slice(0, 30);
-    box.innerHTML = it.length ? it.map(l => `<div class="res"><div class="t"><b>${h(l.codigo)} · ${h(l.nome)}</b><div>${h(endereco(l))}</div></div><button class="btn sm primary" data-f="${h(l.id)}">Abrir</button></div>`).join('') : 'Nenhuma loja encontrada.';
-    box.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { fechaModal(); abreVisita(b.dataset.f, true); });
+    box.innerHTML = it.length ? it.map(l => {
+      const vs = visitasDaLoja(l.id); const aberta = vs.find(([, v]) => v.status === 'em_loja');
+      const bt = aberta ? `<button class="btn sm primary" data-f="${h(l.id)}" data-fid="${h(aberta[0])}">Abrir visita</button>`
+        : vs.length ? `<button class="btn sm primary" data-f="${h(l.id)}" data-nova="${vs.length + 1}">Nova visita (${vs.length + 1}ª)</button>`
+        : `<button class="btn sm primary" data-f="${h(l.id)}">Abrir</button>`;
+      return `<div class="res"><div class="t"><b>${h(l.codigo)} · ${h(l.nome)}</b><div>${h(endereco(l))}</div>${vs.length ? `<div class="muted" style="font-size:12px">Já visitada hoje ${vs.length}x${vs.filter(([, v]) => v.checkout).map(([, v]) => ' · saída ' + hm(v.checkout)).join('')}</div>` : ''}</div>${bt}</div>`;
+    }).join('') : 'Nenhuma loja encontrada.';
+    box.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
+      if (b.dataset.nova) { const n = +b.dataset.nova; if (!(await confirma(`Fazer uma ${n}ª visita nesta loja hoje? Ela fica registrada como visita extra, com check-in, fotos, pesquisa e check-out próprios.`, 'Fazer nova visita'))) return; fechaModal(); return abreVisita(b.dataset.f, true, idVisitaN(b.dataset.f, n), n); }
+      fechaModal(); abreVisita(b.dataset.f, true, b.dataset.fid);
+    });
   };
   $('#bf-q').oninput = r; r(); $('#bf-q').focus();
 }
 
 /* ---------- visita ---------- */
 let unsubFotos = null;
-function abreVisita(lojaId, fora) {
+function abreVisita(lojaId, fora, idForcado, n) {
   if (bloqueiaAlmoco()) return;
   const loja = S.lojas.find(l => l.id === lojaId) || (S.todas || []).find(l => l.id === lojaId) || { id: lojaId, nome: (Object.values(S.vis).find(v => v.lojaId === lojaId) || {}).lojaNome || 'Loja' };
   const ordem = lojasHoje().findIndex(l => l.id === lojaId);
-  S.visita = { loja, id: vid(lojaId), fora: fora || ordem < 0, ordem };
+  const id = idForcado || vid(lojaId); const nv = n || (S.vis[id] && S.vis[id].visitaN) || 1;
+  S.visita = { loja, id, n: nv, fora: fora || ordem < 0 || nv > 1, ordem };
   S.fotos = []; $('#v-obs').value = ''; $('#v-obs-st').textContent = '';
   if (unsubFotos) unsubFotos();
   unsubFotos = onSnapshot(doc(db, 'dias', S.hoje, 'fotos', S.visita.id), s => { S.fotos = s.exists() ? (s.data().imgs || []) : []; renderFotos(); }, () => {});
@@ -485,7 +498,7 @@ $('#v-voltar').onclick = () => { if (unsubFotos) { unsubFotos(); unsubFotos = nu
 
 function renderVisita() {
   const V = S.visita; if (!V) return; const v = S.vis[V.id];
-  $('#v-ordem').textContent = V.fora ? 'Fora da rota' : `Parada ${V.ordem + 1} de ${lojasHoje().length}`;
+  $('#v-ordem').textContent = V.n > 1 ? `${V.n}ª visita do dia nesta loja` : V.fora ? 'Fora da rota' : `Parada ${V.ordem + 1} de ${lojasHoje().length}`;
   $('#v-nome').textContent = V.loja.nome; $('#v-end').textContent = [V.loja.codigo ? 'Cód. ' + V.loja.codigo : '', endereco(V.loja)].filter(Boolean).join(' · ');
   $('#v-pill').innerHTML = statusPill(v);
   const st = $('#v-status');
@@ -514,7 +527,7 @@ function renderVisita() {
 function novaVisita(extra) {
   const V = S.visita;
   return Object.assign({ data: S.hoje, lojaId: V.loja.id, lojaNome: V.loja.nome, codigo: V.loja.codigo || '', cidade: V.loja.cidade || '', promotorId: S.pid, promotorNome: S.prom ? S.prom.nome : '',
-    foraRota: V.fora, ordem: V.fora ? null : V.ordem + 1, checklist: {}, obs: '', fotos: 0, uid: S.uid, atualizado: Date.now(),
+    foraRota: V.fora, ordem: V.fora ? null : V.ordem + 1, visitaN: V.n || 1, checklist: {}, obs: '', fotos: 0, uid: S.uid, atualizado: Date.now(),
     recebidoIn: serverTimestamp(), recebido: serverTimestamp() }, extra);
 }
 // selfie com conferência do rosto (check-in e check-out)
