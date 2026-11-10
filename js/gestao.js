@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-10.1';
+const VERSAO_GESTAO = '2026-11-10.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1177,6 +1177,14 @@ function setFlag(pid, campo, val) {
   setDoc(doc(db, 'variavel', V.mes), { flags: fl, atualizado: Date.now() }, { merge: true }).catch(e => toast(erroMsg(e)));
 }
 const dataAtual = () => { const t = V.vendas && V.vendas.importado; return t ? new Date(t).toLocaleDateString('pt-BR') + ' às ' + new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'; };
+// quadro das regras de premiação (Configurações e Variável)
+function quadroPremiacao() {
+  const R = S.regras; const pc = n => String(n).replace('.', ',') + '%';
+  const linhas = FAIXAS.map(([l, v], i) => `<tr><td>${i ? 'de ' + pc(FAIXAS[i - 1][0]) + ' até menos de ' + pc(l) : 'menos de ' + pc(l)}</td><td class="r"><b>${brl(v)}</b></td></tr>`).join('') + `<tr><td>${pc(FAIXAS[FAIXAS.length - 1][0])} ou mais</td><td class="r"><b style="color:var(--crit)">${brl(0)}</b></td></tr>`;
+  return `<div class="premio-box"><div class="label">Premiação sobre troca (% da troca sobre a venda da rota)</div>
+    <table class="num" style="font-size:13px"><thead><tr><th>% de troca no mês</th><th class="r">Premiação</th></tr></thead><tbody>${linhas}</tbody></table>
+    <div class="muted" style="font-size:12px;line-height:1.45">Troca = troca do cliente + troca ERP. Variável da rota: ${brl(R.base)} quando a rota é cumprida${R.meta ? `, proporcional à venda até o mínimo de ${brl(R.meta)} (ex.: vendeu metade do mínimo, recebe metade)` : ''}. ${R.prop ? 'A premiação também é proporcional à venda até o mínimo.' : 'A premiação é paga cheia, sem proporção.'} Faltas/atraso marcados zeram a premiação.</div></div>`;
+}
 function renderVar() {
   const c = $('#v-var');
   if (!c.dataset.ok) {
@@ -1193,6 +1201,7 @@ function renderVar() {
   const { res, fora } = calcVar(V.vendas.itens, S.lojas, S.promotores, S.regras, V.flags && V.flags.flags);
   const tv = res.reduce((s, r) => s + r.v, 0), tt = res.reduce((s, r) => s + r.t, 0), tp = res.reduce((s, r) => s + r.total, 0);
   box.innerHTML = `<div class="note">${h(V.vendas.fonte || 'Vendas importadas')} · atualizado em ${dataAtual()}. Regras: variável ${brl(S.regras.base)} com mínimo de ${brl(S.regras.meta)}${S.regras.prop ? ' · premiação proporcional' : ''}.</div>
+    <details class="card"><summary style="cursor:pointer;font-weight:700">Como é calculada a premiação sobre troca</summary><div style="margin-top:10px">${quadroPremiacao()}</div></details>
     <div class="kpis num"><div class="kpi"><b>${brl(tv)}</b><span>Venda das rotas</span></div><div class="kpi"><b>${brl(tt)}</b><span>Trocas</span></div><div class="kpi"><b>${pctf(tv ? tt / tv * 100 : 0)}</b><span>% troca geral</span></div><div class="kpi"><b style="color:var(--ok)">${brl(tp)}</b><span>Total a pagar</span></div></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Promotor</th><th class="r">Venda</th><th class="r">Troca</th><th class="r">%</th><th class="r">Variável</th><th class="r">Premiação</th><th class="r">Total</th><th>Rota cumprida</th><th>Faltas</th><th></th></tr></thead><tbody>
     ${res.map(r => `<tr class="click" data-vp="${h(r.pid)}"><td><b>${h(r.nome.split(' ').slice(0, 2).join(' '))}</b><div class="muted" style="font-size:12px">${r.cl.length} clientes</div></td>
@@ -1531,6 +1540,7 @@ function renderConfig() {
       <label class="field"><span>Variável da rota (R$)</span><input type="number" id="cf-base" step="10" value="${S.regras.base}"></label>
       <label class="field"><span>Faturamento mínimo da rota (R$)</span><input type="number" id="cf-meta" step="1000" value="${S.regras.meta}"></label>
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
+      ${quadroPremiacao()}
       <div><button class="btn primary" id="cf-salvar">Salvar</button></div></div>
     <div class="card stack"><h3>Pesquisa de preço</h3><p class="muted" style="margin:0;font-size:14px">Produtos que o promotor pesquisa em toda visita (um por linha). Obrigatório para o check-out.</p><textarea id="cf-pesq" rows="4">${h(S.pesquisa.join('\n'))}</textarea><div><button class="btn primary" id="cf-pesq-s">Salvar pesquisa</button></div></div>
     <div class="card stack"><h3>Jornada e banco de horas</h3><p class="muted" style="margin:0;font-size:14px">Carga prevista por dia (horas:minutos). O banco de horas compara com o trabalhado.</p>
