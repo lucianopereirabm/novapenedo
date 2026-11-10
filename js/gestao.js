@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-10.3';
+const VERSAO_GESTAO = '2026-11-10.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1190,6 +1190,7 @@ async function publicaVar(res, nomeMes, silencioso) {
       clientes: r.cl.map(x => ({ cod: x.cod, nome: x.nome, cidade: x.cidade || '', v: x.v, t: x.t })) }]));
     await escreveEmLotes(ops, () => {});
     await setDoc(doc(db, 'variavel', V.mes), { publicado: em, assinatura: assinaturaVar(res) }, { merge: true });
+    V.flags = Object.assign({}, V.flags, { publicado: em, assinatura: assinaturaVar(res) }); if (S.tab === 'var') setTimeout(renderVar, 0);
     if (!silencioso) toast(`Variável de ${nomeMes} liberada no app de ${res.length} promotores`);
   } catch (e) { toast(erroMsg(e)); } finally { publicando = false; }
 }
@@ -1198,6 +1199,7 @@ async function retiraVar(nomeMes) {
     const s = await getDocs(query(collection(db, 'minhaVariavel'), where('mes', '==', V.mes)));
     for (const d of s.docs) await deleteDoc(d.ref);
     await setDoc(doc(db, 'variavel', V.mes), { publicado: deleteField(), assinatura: deleteField() }, { merge: true });
+    if (V.flags) { delete V.flags.publicado; delete V.flags.assinatura; } if (S.tab === 'var') renderVar();
     toast(`Variável de ${nomeMes} retirada do app`);
   } catch (e) { toast(erroMsg(e)); }
 }
