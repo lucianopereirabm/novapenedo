@@ -37,9 +37,15 @@ service cloud.firestore {
     match /config/{id}     { allow read: if isEquipe() || isMonitor() || isLeitor(); allow write: if isAdmin(); }
 
     // Vendas, trocas e variável: só administrador
-    match /vendas/{id}     { allow read, write: if isAdmin(); }
+    // Gestor só de consulta (leitores) também enxerga a variável da equipe, sem alterar
+    match /vendas/{id}     { allow read: if isAdmin() || isLeitor(); allow write: if isAdmin(); }
     match /acessos/{id}    { allow read, write: if isAdmin(); }
-    match /variavel/{id}   { allow read, write: if isAdmin(); }
+    match /variavel/{id}   { allow read: if isAdmin() || isLeitor(); allow write: if isAdmin(); }
+    // Variável liberada no app: cada promotor lê só a dele
+    match /minhaVariavel/{id} {
+      allow read: if isAdmin() || isLeitor() || (isEquipe() && resource.data.promotorId == meuPromotor());
+      allow write: if isAdmin();
+    }
     // Foto e traços do rosto (dado sensível): só o administrador e o próprio promotor
     // Termos assinados (LGPD e aparelho): promotor só cria o próprio; não altera nem apaga
     match /termos/{tid} {

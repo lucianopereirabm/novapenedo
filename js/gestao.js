@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-10.2';
+const VERSAO_GESTAO = '2026-11-10.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -39,7 +39,7 @@ onAuthStateChanged(auth, async user => {
   if (!admin && !S.leitura) { $('#v-negado').hidden = false; return; }
   if (S.leitura) { // gestor só de monitoramento: só a Torre, sem alterar nada
     document.body.classList.add('so-leitura'); S.tab = 'painel';
-    document.querySelectorAll('.side-item').forEach(b => { if (b.dataset.go !== 'painel') b.hidden = true; });
+    document.querySelectorAll('.side-item').forEach(b => { if (!['painel', 'var'].includes(b.dataset.go)) b.hidden = true; });
   }
   $('#quem').innerHTML = `${S.leitura ? 'Monitoramento' : 'Gestão'}<b>${h(S.leitura ? (user.email || '').replace('@' + DOMINIO_GESTOR, '') : (user.email || ''))}</b>`;
   $('#shell').hidden = false; $('#versao-g').textContent = 'Versão ' + VERSAO_GESTAO; iniciar();
@@ -64,7 +64,7 @@ function iniciar() {
   escuta(doc(db, 'config', 'variavel'), s => { if (s.exists()) S.regras = Object.assign({ base: 250, meta: 70000, prop: false }, s.data()); if (S.tab === 'var' || S.tab === 'config') render(); }, () => {});
   document.querySelectorAll('.side-item').forEach(b => b.onclick = () => { S.tab = b.dataset.go; lsSet('np.g.tab', S.tab); mostra(); window.scrollTo(0, 0); });
   if (!secoes.includes(S.tab)) S.tab = 'painel';
-  mostra(); assinaPainel(); if (!S.leitura) assinaVar(); iniciaAlertas();
+  mostra(); assinaPainel(); assinaVar(); iniciaAlertas();
   // a cada minuto: atualiza horários na tela e, se estiver vendo "hoje", vira o dia sozinho à meia-noite
   let hojeAntes = ymd(new Date());
   setInterval(() => {
@@ -1177,6 +1177,30 @@ function setFlag(pid, campo, val) {
   setDoc(doc(db, 'variavel', V.mes), { flags: fl, atualizado: Date.now() }, { merge: true }).catch(e => toast(erroMsg(e)));
 }
 const dataAtual = () => { const t = V.vendas && V.vendas.importado; return t ? new Date(t).toLocaleDateString('pt-BR') + ' às ' + new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'; };
+// Libera a variável do mês no app: um documento por promotor, só com os clientes dele
+const assinaturaVar = res => JSON.stringify(res.map(r => [r.pid, r.v, r.t, r.total, r.cumprida, r.zerar, r.cl.length])) + JSON.stringify(S.regras);
+let publicando = false;
+async function publicaVar(res, nomeMes, silencioso) {
+  if (publicando || S.leitura) return; publicando = true;
+  try {
+    const R = S.regras; const em = Date.now(); const ops = [];
+    res.forEach(r => ops.push([doc(db, 'minhaVariavel', V.mes + '_' + r.pid), { promotorId: r.pid, mes: V.mes, nomeMes, publicado: em, nome: r.nome,
+      v: r.v, t: r.t, pct: r.pct, fator: r.fator, faixa: r.faixa, variavel: r.variavel, premio: r.premio, total: r.total, cumprida: r.cumprida, zerar: r.zerar,
+      regras: { base: R.base, meta: R.meta, prop: !!R.prop }, faixas: FAIXAS.map(([l, v]) => ({ ate: l, valor: v })), dados: dataAtual(),
+      clientes: r.cl.map(x => ({ cod: x.cod, nome: x.nome, cidade: x.cidade || '', v: x.v, t: x.t })) }]));
+    await escreveEmLotes(ops, () => {});
+    await setDoc(doc(db, 'variavel', V.mes), { publicado: em, assinatura: assinaturaVar(res) }, { merge: true });
+    if (!silencioso) toast(`Variável de ${nomeMes} liberada no app de ${res.length} promotores`);
+  } catch (e) { toast(erroMsg(e)); } finally { publicando = false; }
+}
+async function retiraVar(nomeMes) {
+  try {
+    const s = await getDocs(query(collection(db, 'minhaVariavel'), where('mes', '==', V.mes)));
+    for (const d of s.docs) await deleteDoc(d.ref);
+    await setDoc(doc(db, 'variavel', V.mes), { publicado: deleteField(), assinatura: deleteField() }, { merge: true });
+    toast(`Variável de ${nomeMes} retirada do app`);
+  } catch (e) { toast(erroMsg(e)); }
+}
 // quadro das regras de premiação (Configurações e Variável)
 function quadroPremiacao() {
   const R = S.regras; const pc = n => String(n).replace('.', ',') + '%';
@@ -1196,18 +1220,24 @@ function renderVar() {
   const box = $('#var-corpo');
   if (V.vendas === undefined || vazioCarregando()) { box.innerHTML = '<div class="empty">Carregando…</div>'; return; }
   const [y, m] = V.mes.split('-'); const nomeMes = new Date(+y, +m - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-  if (!V.vendas) { box.innerHTML = `<div class="empty"><b>Sem vendas de ${nomeMes}</b>Mande ao Claude os relatórios de vendas e trocas do mês. Ele devolve um arquivo para importar em Configurações > Importar arquivo.</div>`; $('#var-todos').hidden = true; return; }
+  if (!V.vendas) { box.innerHTML = S.leitura ? `<div class="empty"><b>Sem vendas de ${nomeMes}</b>A variável deste mês ainda não foi lançada.</div>` : `<div class="empty"><b>Sem vendas de ${nomeMes}</b>Mande ao Claude os relatórios de vendas e trocas do mês. Ele devolve um arquivo para importar em Configurações > Importar arquivo.</div>`; $('#var-todos').hidden = true; return; }
   $('#var-todos').hidden = false;
   const { res, fora } = calcVar(V.vendas.itens, S.lojas, S.promotores, S.regras, V.flags && V.flags.flags);
+  const pub = V.flags && V.flags.publicado;
+  // já liberada e algo mudou (faltas, rota cumprida, regras, vendas): atualiza o app sozinho
+  if (pub && !S.leitura && V.flags.assinatura !== assinaturaVar(res)) publicaVar(res, nomeMes, true);
+  const barraPub = S.leitura ? '' : `<div class="card row" style="justify-content:space-between;gap:10px;flex-wrap:wrap"><div style="font-size:14px">${pub ? `<b style="color:var(--ok)">✓ Liberada no app dos promotores</b> desde ${new Date(pub).toLocaleDateString('pt-BR')} às ${hm(pub)}. Cada promotor vê só a dele; mudanças aqui atualizam o app sozinhas.` : '<b>Ainda não liberada no app.</b> Confira os valores e libere: cada promotor vê só a variável dele, com venda e troca de cada cliente.'}</div>
+    <div class="row" style="gap:6px">${pub ? '<button class="btn sm" id="var-ret">Retirar do app</button>' : '<button class="btn primary sm" id="var-pub">Liberar no app dos promotores</button>'}</div></div>`;
   const tv = res.reduce((s, r) => s + r.v, 0), tt = res.reduce((s, r) => s + r.t, 0), tp = res.reduce((s, r) => s + r.total, 0);
   box.innerHTML = `<div class="note">${h(V.vendas.fonte || 'Vendas importadas')} · atualizado em ${dataAtual()}. Regras: variável ${brl(S.regras.base)} com mínimo de ${brl(S.regras.meta)}${S.regras.prop ? ' · premiação proporcional' : ''}.</div>
+    ${barraPub}
     <details class="card"><summary style="cursor:pointer;font-weight:700">Como é calculada a premiação sobre troca</summary><div style="margin-top:10px">${quadroPremiacao()}</div></details>
     <div class="kpis num"><div class="kpi"><b>${brl(tv)}</b><span>Venda das rotas</span></div><div class="kpi"><b>${brl(tt)}</b><span>Trocas</span></div><div class="kpi"><b>${pctf(tv ? tt / tv * 100 : 0)}</b><span>% troca geral</span></div><div class="kpi"><b style="color:var(--ok)">${brl(tp)}</b><span>Total a pagar</span></div></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Promotor</th><th class="r">Venda</th><th class="r">Troca</th><th class="r">%</th><th class="r">Variável</th><th class="r">Premiação</th><th class="r">Total</th><th>Rota cumprida</th><th>Faltas</th><th></th></tr></thead><tbody>
     ${res.map(r => `<tr class="click" data-vp="${h(r.pid)}"><td><b>${h(r.nome.split(' ').slice(0, 2).join(' '))}</b><div class="muted" style="font-size:12px">${r.cl.length} clientes</div></td>
       <td class="r">${brl(r.v)}${r.fator < 1 ? `<div style="font-size:12px;color:var(--warn)">${Math.round(r.fator * 100)}% do mínimo</div>` : ''}</td><td class="r">${brl(r.t)}</td>
       <td class="r"><span class="pill ${r.faixa >= 375 ? 'ok' : r.faixa ? 'live' : 'no'}">${pctf(r.pct)}</span></td><td class="r">${brl(r.variavel)}</td><td class="r">${brl(r.premio)}</td><td class="r"><b>${brl(r.total)}</b></td>
-      <td><input type="checkbox" data-fc="${h(r.pid)}" ${r.cumprida ? 'checked' : ''} aria-label="Rota cumprida"></td><td><input type="checkbox" data-fz="${h(r.pid)}" ${r.zerar ? 'checked' : ''} aria-label="Zerar premiação"></td>
+      <td><input type="checkbox" data-fc="${h(r.pid)}" ${r.cumprida ? 'checked' : ''} ${S.leitura ? 'disabled' : ''} aria-label="Rota cumprida"></td><td><input type="checkbox" data-fz="${h(r.pid)}" ${r.zerar ? 'checked' : ''} ${S.leitura ? 'disabled' : ''} aria-label="Zerar premiação"></td>
       <td><button class="btn sm" data-rel="${h(r.pid)}">Relatório</button></td></tr>
       ${V.aberto[r.pid] ? `<tr><td colspan="10" style="background:var(--sunk)"><table class="num" style="font-size:13px"><thead><tr><th>Cód.</th><th>Cliente</th><th class="r">Venda</th><th class="r">Bonif.</th><th class="r">Dev. NF</th><th class="r">Troca</th><th class="r">%</th></tr></thead><tbody>${r.cl.map(x => `<tr><td>${h(x.cod)}</td><td>${h(x.nome)}</td><td class="r">${brl(x.v)}</td><td class="r">${brl(x.tb)}</td><td class="r">${brl(x.td)}</td><td class="r">${brl(x.t)}</td><td class="r">${x.v ? pctf(x.t / x.v * 100) : '—'}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
     </tbody><tfoot><tr><td><b>Total</b></td><td class="r"><b>${brl(tv)}</b></td><td class="r"><b>${brl(tt)}</b></td><td class="r">${pctf(tv ? tt / tv * 100 : 0)}</td><td class="r"><b>${brl(res.reduce((s, r) => s + r.variavel, 0))}</b></td><td class="r"><b>${brl(res.reduce((s, r) => s + r.premio, 0))}</b></td><td class="r"><b>${brl(tp)}</b></td><td></td><td></td><td></td></tr></tfoot></table></div></div>
@@ -1217,6 +1247,8 @@ function renderVar() {
   box.querySelectorAll('[data-fz]').forEach(i => i.onchange = () => setFlag(i.dataset.fz, 'zerar', i.checked));
   box.querySelectorAll('[data-rel]').forEach(b => b.onclick = e => { e.stopPropagation(); relatorio(res.find(r => r.pid === b.dataset.rel), nomeMes); });
   $('#var-todos').onclick = () => baixaPDF(res, nomeMes);
+  const bp = $('#var-pub'); if (bp) bp.onclick = async () => { if (await confirma(`Liberar a variável de ${nomeMes} no app? Cada um dos ${res.length} promotores passa a ver a dele (venda, troca por cliente, premiação e total).`, 'Liberar')) publicaVar(res, nomeMes); };
+  const br = $('#var-ret'); if (br) br.onclick = async () => { if (await confirma(`Retirar a variável de ${nomeMes} do app dos promotores?`, 'Retirar')) retiraVar(nomeMes); };
 }
 function textoWhats(r, nomeMes) {
   let t = `*Variável promotor · ${nomeMes}*\n*${r.nome}*\n\nVenda da rota: ${brl(r.v)}${r.fator < 1 ? ` (${Math.round(r.fator * 100)}% do mínimo de ${brl(S.regras.meta)})` : ''}\nTroca: ${brl(r.t)} (${pctf(r.pct)})\nVariável da rota: ${brl(r.variavel)}${!r.cumprida ? ' (rota não cumprida)' : ''}\nPremiação por trocas: ${brl(r.premio)}${r.zerar ? ' (zerada por falta/atraso)' : ''}\n*Total: ${brl(r.total)}*\n_Dados atualizados em ${dataAtual()}_\n\n*Clientes da rota*\n`;

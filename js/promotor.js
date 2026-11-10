@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-10.1';
+export const VERSAO_APP = '2026-11-10.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -376,7 +376,7 @@ function render() {
     return `<button class="stop ${cls}" data-loja="${h(l.id)}"><span class="n num">${i + 1}</span><span class="t"><b>${h(l.nome)}</b><span>${h(l.codigo || '')} · ${h(l.bairro || l.cidade || '')}</span></span>${statusPill(v)}</button>`;
   }).join('') + '</div>';
   if (extras.length) html += '<div class="label">Fora da rota</div><div class="stops">' + extras.map(v => `<button class="stop" data-loja="${h(v.lojaId)}" data-fora="1"><span class="n">+</span><span class="t"><b>${h(v.lojaNome)}</b><span>${h(v.cidade || '')}</span></span>${statusPill(v)}</button>`).join('') + '</div>';
-  html += `<button class="btn" id="b-fora">Visitar loja fora da rota de hoje</button>`;
+  html += `<button class="btn" id="b-fora">Visitar loja fora da rota de hoje</button><button class="btn" id="b-var">💰 Minha variável</button>`;
   html += `<p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
   const trava = almocoTravado();
   if (trava) { // almoço automático: app bloqueado
@@ -390,8 +390,45 @@ function render() {
   c.innerHTML = html;
   if (trava) return;
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora));
-  $('#b-fora').onclick = buscaFora;
+  $('#b-fora').onclick = buscaFora; $('#b-var').onclick = () => minhaVariavel();
 }
+/* ---------- minha variável (liberada pela gestão: só a do próprio promotor) ---------- */
+const brl = n => (n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const pctf = n => (n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+async function minhaVariavel(mesSel) {
+  abreModal('<div class="spread"><h3>💰 Minha variável</h3><button class="btn ghost" id="mv-x">Fechar</button></div><div id="mv-c" class="muted">Carregando…</div>');
+  $('#mv-x').onclick = fechaModal;
+  let lista = [];
+  try { lista = (await getDocs(query(collection(db, 'minhaVariavel'), where('promotorId', '==', S.pid)))).docs.map(d => d.data()).sort((a, b) => b.mes.localeCompare(a.mes)); }
+  catch (e) { const c = $('#mv-c'); if (c) c.textContent = erroMsg(e); return; }
+  const c = $('#mv-c'); if (!c) return;
+  if (!lista.length) { c.innerHTML = '<div class="empty"><b>Ainda não liberada</b>Quando o supervisor fechar a variável do mês, ela aparece aqui com a venda e a troca de cada cliente da sua rota.</div>'; return; }
+  const r = lista.find(x => x.mes === mesSel) || lista[0];
+  const fx = r.faixas || []; const pc = n => String(n).replace('.', ',') + '%';
+  const iFx = r.v ? fx.findIndex(f => r.pct < f.ate) : -1;
+  // quanto de troca precisa baixar para subir de faixa
+  const prox = iFx > 0 ? fx[iFx - 1] : iFx === -1 && r.v && fx.length ? fx[fx.length - 1] : null;
+  const alvo = prox ? Math.max(0, Math.floor((r.v * prox.ate / 100 - 0.01) * 100) / 100) : null;
+  const dica = prox && alvo != null ? `<div class="note">Para chegar na faixa de <b>${brl(prox.valor)}</b>, a troca do mês precisa ficar abaixo de <b>${pc(prox.ate)}</b> da venda: até <b>${brl(alvo)}</b> com esta venda (foi ${brl(r.t)}).</div>` : '';
+  c.className = 'stack'; c.style.gap = '12px';
+  c.innerHTML = `${lista.length > 1 ? `<div class="chips">${lista.map(x => `<button class="chip" data-mv="${h(x.mes)}" aria-pressed="${x.mes === r.mes}">${h(x.nomeMes || x.mes)}</button>`).join('')}</div>` : ''}
+    <div><div class="label">${h(r.nomeMes || r.mes)}</div><div class="muted" style="font-size:12px">Dados de vendas e trocas de ${h(r.dados || '')}</div></div>
+    <div class="card stack" style="gap:6px;text-align:center"><span class="label">Total a receber</span><b class="num" style="font:800 34px var(--f-body);color:var(--ok)">${brl(r.total)}</b></div>
+    <div class="times num" style="grid-template-columns:1fr 1fr"><div><span class="label">Venda da rota</span><b>${brl(r.v)}</b></div><div><span class="label">Troca</span><b>${brl(r.t)} · ${pctf(r.pct)}</b></div>
+      <div><span class="label">Variável da rota</span><b>${brl(r.variavel)}</b></div><div><span class="label">Premiação sobre troca</span><b>${brl(r.premio)}</b></div></div>
+    ${!r.cumprida ? '<div class="note crit">Rota não cumprida no mês: a variável da rota não foi paga.</div>' : ''}${r.zerar ? '<div class="note crit">Premiação zerada por falta/atraso no mês.</div>' : ''}
+    ${r.fator < 1 ? `<div class="note warn">A venda da rota ficou em ${Math.round(r.fator * 100)}% do mínimo de ${brl(r.regras.meta)}: a variável${r.regras.prop ? ' e a premiação foram pagas' : ' foi paga'} na mesma proporção.</div>` : ''}
+    <div class="card stack" style="gap:6px"><div class="label">Premiação sobre troca (troca ÷ venda da rota)</div>
+      <table class="num" style="font-size:13px;width:100%"><tbody>${fx.map((f, i) => `<tr${i === iFx ? ' style="background:#E9F7EF;font-weight:700"' : ''}><td>${i ? 'de ' + pc(fx[i - 1].ate) + ' a menos de ' + pc(f.ate) : 'menos de ' + pc(f.ate)}${i === iFx ? ' ← você' : ''}</td><td class="r">${brl(f.valor)}</td></tr>`).join('')}
+      <tr${r.v && iFx === -1 ? ' style="background:#FDECEC;font-weight:700"' : ''}><td>${fx.length ? pc(fx[fx.length - 1].ate) + ' ou mais' : ''}${r.v && iFx === -1 ? ' ← você' : ''}</td><td class="r">${brl(0)}</td></tr></tbody></table>
+      <div class="muted" style="font-size:12px">Troca = troca do cliente + troca ERP. Variável da rota: ${brl(r.regras.base)} com a rota cumprida, proporcional à venda até ${brl(r.regras.meta)}.</div></div>
+    ${dica}
+    <div class="card stack" style="gap:4px"><div class="label">Seus clientes (${r.clientes.length})</div>
+      ${r.clientes.map(x => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px;align-items:flex-start"><span style="min-width:0"><b>${h(x.nome)}</b><span class="muted" style="display:block;font-size:12px">${h(x.cod)}${x.cidade ? ' · ' + h(x.cidade) : ''}</span></span>
+        <span class="num" style="text-align:right;font-size:13px;white-space:nowrap">venda ${brl(x.v)}<br>troca ${brl(x.t)}${x.v ? ` · <b style="color:${x.t / x.v * 100 >= 2 ? 'var(--crit)' : 'inherit'}">${pctf(x.t / x.v * 100)}</b>` : ''}</span></div>`).join('')}</div>`;
+  c.querySelectorAll('[data-mv]').forEach(b => b.onclick = () => minhaVariavel(b.dataset.mv));
+}
+
 /* ---------- jornada: início e fim do dia de trabalho ---------- */
 function cartaoJornada() {
   const J = calcJornada({ vs: Object.values(S.vis), j: S.jor, date: S.hoje, regras: regrasJornada(S.cfgApp), hoje: S.hoje });
