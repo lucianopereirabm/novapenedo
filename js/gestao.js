@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-06.4';
+const VERSAO_GESTAO = '2026-11-10.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -326,7 +326,7 @@ function divideJornada(J, vs, j) {
   let iv = vs.filter(v => v.checkin && v.status !== 'nao_visitada').map(v => [Math.max(v.checkin, J.inicio), Math.min(v.checkout || (J.andamento && v.status === 'em_loja' ? ag : v.checkin), J.fim)]).filter(x => x[1] > x[0]).sort((a, b) => a[0] - b[0]);
   const m = []; iv.forEach(x => { const u = m[m.length - 1]; if (u && x[0] <= u[1]) u[1] = Math.max(u[1], x[1]); else m.push(x.slice()); });
   let loja = m.reduce((t, x) => t + (x[1] - x[0]), 0);
-  if (J.almocoMarcado && j && j.almocoInicio) { const a0 = j.almocoInicio, a1 = j.almocoFim || ag; m.forEach(x => { loja -= Math.max(0, Math.min(x[1], a1) - Math.max(x[0], a0)); }); }
+  if (J.almoco && J.almocoIni) { const a0 = J.almocoIni, a1 = J.almocoFim || ag; m.forEach(x => { loja -= Math.max(0, Math.min(x[1], a1) - Math.max(x[0], a0)); }); }
   loja = Math.min(J.trabalhado, Math.max(0, Math.round(loja / 60000)));
   return { loja, desl: J.trabalhado - loja };
 }
@@ -378,7 +378,7 @@ async function renderMes() {
       <td class="r"><b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b>${r.andamento ? `<div class="muted" style="font-size:11px">+ hoje ${hmin(r.andamento.trabalhado)} em andamento</div>` : ''}</td>
       <td class="r">${r.feitas}/${r.prog} <span class="muted">${r.prog ? Math.round(r.feitas / r.prog * 100) : 0}%</span></td><td class="r">${r.nao || '—'}</td><td class="r" style="color:${r.semVisita ? 'var(--crit)' : 'inherit'}">${r.semVisita || '—'}</td><td class="r">${r.fora || '—'}</td><td class="r" style="color:${r.alertas ? 'var(--crit)' : 'inherit'}">${r.alertas || '—'}</td></tr>`).join('')}
     </tbody></table></div></div>
-    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos 1h de almoço nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). Em loja = do check-in ao check-out de cada loja (sem o almoço marcado); Deslocamento = o restante da jornada, entre uma loja e outra. Jornada = do check-in da primeira loja ao check-out da última. O dia de hoje entra no saldo quando o promotor sai da última loja. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos o almoço automático das ${(regrasJornada(S.empresa).almocoFixo || {}).ini || '12:00'} às ${(regrasJornada(S.empresa).almocoFixo || {}).fim || '13:00'}; antes de 10/11, 1h nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). Em loja = do check-in ao check-out de cada loja (sem o almoço marcado); Deslocamento = o restante da jornada, entre uma loja e outra. Jornada = do check-in da primeira loja ao check-out da última. O dia de hoje entra no saldo quando o promotor sai da última loja. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
     <button class="btn sm" id="m-csv">Baixar planilha do mês</button></div>`;
   box.querySelectorAll('[data-pm]').forEach(tr => tr.onclick = () => { P.selMes = tr.dataset.pm; renderPainel(); });
   $('#m-csv').onclick = () => csvMes(RS, nomeMes);
@@ -390,7 +390,7 @@ function renderMesPromotor(r, nomeMes) {
     <div class="card" style="padding:0"><div class="table-wrap"><table class="num"><thead><tr><th>Data</th><th>Jornada</th><th class="r">Trabalhado</th><th class="r">Em loja</th><th class="r">Deslocamento</th><th class="r">Previsto</th><th class="r">Saldo</th><th class="r">Visitas</th><th>Sem visita</th><th class="r">Alertas</th></tr></thead><tbody>
     ${r.dias.map(x => { const J = x.J; return `<tr class="click" data-dd="${x.d}"><td><b>${x.d.slice(8)}/${x.d.slice(5, 7)}</b> <span class="muted">${DIAS[J.wd]}</span></td>
       <td>${x.falta ? '<span class="tag no">sem jornada</span>' : J.tem ? `${hm(J.inicio)}–${J.andamento ? 'agora' : hm(J.fim) + (J.fimEst ? '*' : '')}` : '—'}</td>
-      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}${J.tem && J.almoco ? `<div class="muted" style="font-size:11px">almoço ${J.almocoMarcado ? hm(J.almocoIni) + '–' + (J.almocoFim ? hm(J.almocoFim) : '?') : '1h (padrão)'}</div>` : ''}</td><td class="r">${J.tem ? hmin(J.loja) : '—'}</td><td class="r">${J.tem ? hmin(J.desl) : '—'}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento && x.d !== ymd(new Date()) ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento && x.d !== ymd(new Date()) ? saldoTxt(J.saldo) : J.tem ? 'hoje, em andamento' : '—'}</td>
+      <td class="r">${J.tem ? hmin(J.trabalhado) : '—'}${J.tem && J.almoco ? `<div class="muted" style="font-size:11px">almoço ${J.almocoMarcado || J.almocoFixo ? hm(J.almocoIni) + '–' + (J.almocoFim ? hm(J.almocoFim) : '?') : '1h (padrão)'}</div>` : ''}</td><td class="r">${J.tem ? hmin(J.loja) : '—'}</td><td class="r">${J.tem ? hmin(J.desl) : '—'}</td><td class="r">${hmin(J.esperado)}</td><td class="r" style="color:${J.tem && !J.andamento && x.d !== ymd(new Date()) ? (J.saldo < 0 ? 'var(--crit)' : 'var(--ok)') : 'inherit'}">${J.tem && !J.andamento && x.d !== ymd(new Date()) ? saldoTxt(J.saldo) : J.tem ? 'hoje, em andamento' : '—'}</td>
       <td class="r">${x.feitas}/${x.lojas}${x.fora ? ` <span class="muted">+${x.fora}</span>` : ''}</td>
       <td style="font-size:12.5px">${x.nao ? `<span class="tag">${x.nao} com motivo</span> ` : ''}${x.sem.length ? `<span style="color:var(--crit)">${x.sem.map(l => h(l.nome)).join(', ')}</span>` : (x.nao ? '' : '—')}</td>
       <td class="r" style="color:${x.al ? 'var(--crit)' : 'inherit'}">${x.al || '—'}</td></tr>`; }).join('')}
@@ -437,9 +437,10 @@ function enquadra(pts) { if (P.ajustar && pts.length) { P.mapa.fitBounds(pts, { 
 // Ponto da loja no mapa: exato (check-in/manual) ou aproximado (pelo endereço). O raio do check-in usa só o exato.
 // check-in fora da loja: passou do limite gravado na visita (150 m com local exato; folga maior com local aproximado)
 // alerta ainda não tratado pela gestão (rosto diferente ou check-in fora da loja)
-const temAlerta = v => !!v && (v.rostoOk === false || foraLoja(v));
+const temAlerta = v => !!v && (v.rostoOk === false || v.rostoOutOk === false || foraLoja(v) || foraSaida(v));
 const alertaAberto = v => temAlerta(v) && !v.alertaTratado;
 const foraLoja = v => !!v && v.distIn != null && v.distIn > (v.limite || S.raio);
+const foraSaida = v => !!v && v.distOut != null && (v.foraRaioOut != null ? v.foraRaioOut : v.distOut > (v.limiteOut || v.limite || S.raio));
 const pontoLoja = l => l && l.lat != null ? [+l.lat, +l.lng] : l && l.latAprox != null ? [+l.latAprox, +l.lngAprox] : null;
 const G = { rodando: false };
 async function geocodifica(l) {
@@ -680,7 +681,7 @@ function kpiLista(k, dias) {
   } else if (k === 'nao') {
     corpo = `<div class="paradas">${dias.flatMap(d => d.paradas.filter(x => x.v && x.v.status === 'nao_visitada').map(x => linha(d, x, `<span class="tag no">${h(x.v.motivo || 'sem motivo')}</span>${x.v.obs ? ' <span class="muted" style="font-size:12px">' + h(x.v.obs) + '</span>' : ''}`))).join('') || '<div class="muted">Nenhuma loja não visitada.</div>'}</div>`;
   } else if (k === 'al') {
-    const tags = v => [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', foraLoja(v) ? `<span class="tag no">⚠️ fora da loja · ${v.distIn} m</span>` : ''].join(' ');
+    const tags = v => [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', foraSaida(v) ? `<span class="tag no">⚠️ saída fora da loja (${v.distOut} m)</span>` : '', v.rostoOutOk === false ? '<span class="tag no">rosto ≠ na saída</span>' : '', foraLoja(v) ? `<span class="tag no">⚠️ fora da loja · ${v.distIn} m</span>` : ''].join(' ');
     const todos = dias.flatMap(d => d.paradas.filter(x => temAlerta(x.v)).map(x => [d, x]));
     const ab = todos.filter(([, x]) => !x.v.alertaTratado), tr = todos.filter(([, x]) => x.v.alertaTratado);
     const acoes = (d, x) => S.leitura ? '' : `<div class="row" style="gap:6px;padding:0 4px 10px 44px;flex-wrap:wrap"><input type="text" placeholder="Observação (opcional): ex. falou com o gerente, GPS falhou…" data-ao="${h(x.id)}" style="flex:1 1 220px;font-size:13px;padding:6px 8px">${x.v.gpsIn ? `<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${x.v.gpsIn.lat},${x.v.gpsIn.lng}">🗺 Ver GPS no mapa</a>` : ''}${foraLoja(x.v) && x.v.gpsIn ? `<button class="btn sm" data-at-loc="${h(x.id)}" title="O promotor estava na loja: o ponto cadastrado é que estava errado">📍 Corrigir local da loja</button>` : ''}<button class="btn sm" data-at-ok="${h(x.id)}">✓ Justificado</button><button class="btn sm danger" data-at-ir="${h(x.id)}">✗ Irregular</button></div>`;
@@ -739,7 +740,8 @@ async function detalheVisita(date, id, vInfo) {
   abreModal(`<div class="spread" style="align-items:flex-start"><div><div class="label">${h(v.promotorNome || prim(v.promotorId))} · ${dataBR(date)}</div><h3 style="font-size:20px">${h(v.lojaNome)}</h3></div><button class="btn ghost" id="md-x">Fechar</button></div>
     ${v.status === 'nao_visitada' ? `<div class="note warn"><b>Não visitada:</b> ${h(v.motivo)}${v.obs ? ' — ' + h(v.obs) : ''}</div>` :
     `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout)}</b></div></div>
-     <div class="note ${v.semCoord ? 'warn' : foraLoja(v) ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m ${v.localAprox ? 'do endereço (local aproximado, tolerância ' + (v.limite || 500) + ' m)' : 'da loja'}` : ''}${foraLoja(v) ? ' · <b>⚠️ fora da loja</b>' : ''}${v.distOut != null ? ` · check-out a ${v.distOut} m` : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
+     <div class="note ${v.semCoord ? 'warn' : foraLoja(v) ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m ${v.localAprox ? 'do endereço (local aproximado, tolerância ' + (v.limite || 500) + ' m)' : 'da loja'}` : ''}${foraLoja(v) ? ' · <b>⚠️ fora da loja</b>' : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
+     ${v.checkout ? `<div class="note ${foraSaida(v) ? 'crit' : v.distOut != null ? 'ok' : 'warn'}">${v.gpsOut ? `Check-out em ${v.gpsOut.lat.toFixed(5)}, ${v.gpsOut.lng.toFixed(5)} (precisão ${v.gpsOut.prec} m)` : 'Sem GPS no check-out'}${v.distOut != null ? ` · ${v.distOut} m ${v.localAprox ? 'do endereço' : 'da loja'}` : ''}${foraSaida(v) ? ' · <b>⚠️ saída fora da loja</b>' : ''}${v.rostoOutOk === false ? ' · <b>⚠️ rosto da selfie de saída não confere</b>' : v.rostoOutOk ? ' · rosto da saída confere' : ''}${v.gpsOut ? ` · <a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsOut.lat},${v.gpsOut.lng}">ver no mapa</a>` : ''}</div>` : ''}
      ${linhaEnvio(v)}
      ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
      ${v.gpsIn && loja ? `<div class="row">${S.leitura ? '' : '<button class="btn sm" id="md-local">Usar este ponto como local da loja</button>'}<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
@@ -757,8 +759,23 @@ async function detalheVisita(date, id, vInfo) {
   if (v.status !== 'nao_visitada') {
     try {
       const s = await getDoc(doc(db, 'dias', date, 'fotos', id)); const box = $('#md-fotos'); if (!box) return;
-      const nomes = { chegada: 'Chegada (selfie)', antes: 'Gôndola antes', depois: 'Gôndola depois', extra: 'Foto extra' };
-      box.innerHTML = s.exists() && (s.data().imgs || []).length ? s.data().imgs.map(f => `<div class="stack" style="gap:4px"><div class="label" style="color:var(--ink)">${nomes[f.tipo] || 'Foto'} · ${hm(f.ts)}</div><img class="bigfoto" src="${f.d}" alt="${nomes[f.tipo] || 'Foto'}"></div>`).join('') : 'Nenhuma foto.';
+      const nomes = { chegada: 'Chegada (selfie)', antes: 'Gôndola antes', depois: 'Gôndola depois', extra: 'Foto extra', saida: 'Saída (selfie)' };
+      const imgs = s.exists() ? (s.data().imgs || []) : [];
+      box.innerHTML = imgs.length ? imgs.map((f, i) => `<div class="stack" style="gap:4px"><div class="label" style="color:var(--ink)">${nomes[f.tipo] || 'Foto'} · ${hm(f.ts)}</div><img class="bigfoto" src="${f.d}" alt="${nomes[f.tipo] || 'Foto'}">${!S.leitura && (f.tipo === 'chegada' || f.tipo === 'saida') ? `<div><button class="btn sm" data-usarosto="${i}">Usar esta selfie como foto do cadastro</button> <span class="muted" data-usamsg="${i}" style="font-size:12px"></span></div>` : ''}</div>`).join('') : 'Nenhuma foto.';
+      box.querySelectorAll('[data-usarosto]').forEach(bt => bt.onclick = async () => {
+        const i = +bt.dataset.usarosto; const f = imgs[i]; const msg = box.querySelector(`[data-usamsg="${i}"]`); const nome = promNome(v.promotorId);
+        if (!(await confirma(`Trocar a foto do cadastro de ${nome} por esta selfie? A partir daí o reconhecimento do rosto no app compara com ela.`, 'Trocar foto'))) return;
+        bt.disabled = true; msg.textContent = 'Lendo o rosto… (pode demorar alguns segundos)';
+        try {
+          const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = f.d; });
+          const lf = await leRostoFoto(img); const r = lf && lf.r;
+          if (!r) { msg.innerHTML = '<span style="color:var(--crit)">Não encontrei um rosto nítido nesta selfie. Use outra.</span>'; bt.disabled = false; return; }
+          const ant = S.rostos[v.promotorId];
+          await setDoc(doc(db, 'rostos', v.promotorId), { foto: recorteRosto(lf.fonte, r.box), desc: r.desc, atualizado: Date.now(), origem: 'selfie ' + date + ' ' + (v.lojaNome || ''),
+            anterior: ant ? { foto: ant.foto || null, desc: ant.desc || null, atualizado: ant.atualizado || null } : null }); // guarda a foto anterior (cópia de segurança)
+          msg.innerHTML = '<span style="color:var(--ok)">Foto do cadastro trocada.</span>'; toast('Foto do cadastro de ' + nome.split(' ')[0] + ' trocada');
+        } catch (err) { msg.textContent = 'Não consegui gravar: ' + erroMsg(err); bt.disabled = false; }
+      });
     } catch (e) { const box = $('#md-fotos'); if (box) box.textContent = 'Não consegui carregar as fotos.'; }
   }
 }
@@ -1522,7 +1539,7 @@ function renderConfig() {
       <label class="field" style="flex:1"><span>Descontar quando a jornada passar de (horas)</span><input type="number" id="cf-almac" min="0" step="0.5" value="${regrasJornada(S.empresa).almocoAcima / 60}"></label></div>
       <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Início previsto do dia</span><input type="time" id="cf-inip" value="${h(regrasJornada(S.empresa).inicioPrevisto)}"></label>
       <label class="field" style="flex:1"><span>Alerta amarelo após (minutos sem check-in)</span><input type="number" id="cf-tol" min="5" step="5" value="${regrasJornada(S.empresa).tolerancia}"></label></div>
-      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço mínimo (minutos; o app fica bloqueado nesse tempo · 0 = livre)</span><input type="number" id="cf-almmin" min="0" step="15" value="${regrasJornada(S.empresa).almocoMinimo}"></label></div>
+      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço automático: início (app bloqueado)</span><input type="time" id="cf-almi" value="${h((regrasJornada(S.empresa).almocoFixo || {}).ini || '12:00')}"></label><label class="field" style="flex:1"><span>Fim do almoço</span><input type="time" id="cf-almf" value="${h((regrasJornada(S.empresa).almocoFixo || {}).fim || '13:00')}"></label></div>
       <label class="field"><span>Início do controle pelo app (dias antes não contam falta)</span><input type="date" id="cf-ini" value="${h(S.empresa.inicioControle || '2026-10-30')}"></label>
       <div><button class="btn primary" id="cf-jor-s">Salvar jornada</button></div></div>
     <div class="card stack"><h3>Alertas no celular do gestor (app ntfy)</h3>
@@ -1570,7 +1587,7 @@ function renderConfig() {
     const carga = {}; let erro = false;
     document.querySelectorAll('[data-cg]').forEach(i => { const m = i.value.trim().match(/^(\d{1,2})(?:[:h](\d{1,2}))?$/); if (!m) erro = true; else carga[i.dataset.cg] = +m[1] * 60 + (+m[2] || 0); });
     if (erro) return toast('Use o formato 8:00 nas cargas.');
-    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60), inicioPrevisto: $('#cf-inip').value || '08:00', tolerancia: +$('#cf-tol').value || 30, almocoMinimo: +$('#cf-almmin').value || 0 } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
+    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60), inicioPrevisto: $('#cf-inip').value || '08:00', tolerancia: +$('#cf-tol').value || 30, almocoFixo: { ini: $('#cf-almi').value || '12:00', fim: $('#cf-almf').value || '13:00' } } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
   };
   $('#cf-pass-s').onclick = () => {
     const tarifas = {}, inter = {}; let erro = '';
