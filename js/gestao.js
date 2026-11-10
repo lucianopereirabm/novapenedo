@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-10.4';
+const VERSAO_GESTAO = '2026-11-10.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1215,7 +1215,7 @@ function renderVar() {
   const c = $('#v-var');
   if (!c.dataset.ok) {
     c.dataset.ok = 1;
-    c.innerHTML = `<div class="spread" style="flex-wrap:wrap"><h2>Variável promotor</h2><div class="row"><input type="month" id="var-mes" style="width:auto"><button class="btn primary" id="var-todos">PDF de todos</button></div></div><div id="var-corpo" class="stack"></div>`;
+    c.innerHTML = `<div class="spread" style="flex-wrap:wrap"><h2>Variável promotor</h2><div class="row"><input type="month" id="var-mes" style="width:auto"><button class="btn primary" id="var-todos">Gerar PDF</button></div></div><div id="var-corpo" class="stack"></div>`;
     $('#var-mes').value = V.mes;
     $('#var-mes').onchange = e => { if (!e.target.value) return; V.mes = e.target.value; lsSet('np.var.mes', V.mes); assinaVar(); renderVar(); };
   }
@@ -1248,7 +1248,17 @@ function renderVar() {
   box.querySelectorAll('[data-fc]').forEach(i => i.onchange = () => setFlag(i.dataset.fc, 'cumprida', i.checked));
   box.querySelectorAll('[data-fz]').forEach(i => i.onchange = () => setFlag(i.dataset.fz, 'zerar', i.checked));
   box.querySelectorAll('[data-rel]').forEach(b => b.onclick = e => { e.stopPropagation(); relatorio(res.find(r => r.pid === b.dataset.rel), nomeMes); });
-  $('#var-todos').onclick = () => baixaPDF(res, nomeMes);
+  $('#var-todos').onclick = () => { // escolher quais promotores saem no PDF (ou todos)
+    abreModal(`<div class="spread"><h3>PDF da variável · ${h(nomeMes)}</h3><button class="btn ghost" id="pv-x">Fechar</button></div>
+      <label class="row" style="gap:8px;font-weight:700"><input type="checkbox" id="pv-todos" checked> Marcar todos</label>
+      <div class="stack" style="gap:6px;max-height:50vh;overflow:auto">${res.map(r => `<label class="row" style="gap:8px"><input type="checkbox" data-pv="${h(r.pid)}" checked> ${h(r.nome)} <span class="muted num" style="font-size:12px;margin-left:auto">${brl(r.total)}</span></label>`).join('')}</div>
+      <div class="row end"><button class="btn" id="pv-c">Cancelar</button><button class="btn primary" id="pv-s">Gerar PDF</button></div>`);
+    const cks = () => [...document.querySelectorAll('[data-pv]')];
+    $('#pv-todos').onchange = e => cks().forEach(c => c.checked = e.target.checked);
+    cks().forEach(c => c.onchange = () => { $('#pv-todos').checked = cks().every(x => x.checked); });
+    $('#pv-x').onclick = $('#pv-c').onclick = fechaModal;
+    $('#pv-s').onclick = () => { const ids = cks().filter(c => c.checked).map(c => c.dataset.pv); if (!ids.length) return toast('Marque pelo menos um promotor.'); fechaModal(); baixaPDF(res.filter(r => ids.includes(r.pid)), nomeMes); };
+  };
   const bp = $('#var-pub'); if (bp) bp.onclick = async () => { if (await confirma(`Liberar a variável de ${nomeMes} no app? Cada um dos ${res.length} promotores passa a ver a dele (venda, troca por cliente, premiação e total).`, 'Liberar')) publicaVar(res, nomeMes); };
   const br = $('#var-ret'); if (br) br.onclick = async () => { if (await confirma(`Retirar a variável de ${nomeMes} do app dos promotores?`, 'Retirar')) retiraVar(nomeMes); };
 }
@@ -1276,8 +1286,10 @@ async function baixaPDF(lista, nomeMes) {
     if (logo) try { docp.addImage(logo, 'PNG', 12, 8, 72, 13.8); } catch (e) {}
     docp.setTextColor(255, 255, 255); docp.setFontSize(9); docp.text('VARIÁVEL PROMOTOR', W - 12, 13, { align: 'right' });
     docp.setFontSize(13); docp.setFont(undefined, 'bold'); docp.text(nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1), W - 12, 21, { align: 'right' });
-    docp.setTextColor(23, 25, 37); docp.setFontSize(17); docp.text(r.nome, 12, 42); docp.setFont(undefined, 'normal');
-    docp.setFontSize(8.5); docp.setTextColor(92, 96, 112); docp.text('Vendas e trocas atualizadas em ' + dataAtual(), 12, 47.5);
+    const foto = S.rostos[r.pid] && S.rostos[r.pid].foto; const nx = foto ? 31 : 12; // foto do promotor, como no PDF da rota
+    if (foto) try { docp.setFillColor(244, 188, 28); docp.roundedRect(11.3, 33.3, 17.4, 17.4, 2.5, 2.5, 'F'); docp.addImage(foto, 'JPEG', 12, 34, 16, 16); } catch (e) {}
+    docp.setTextColor(23, 25, 37); docp.setFontSize(17); docp.text(r.nome, nx, 41.5); docp.setFont(undefined, 'normal');
+    docp.setFontSize(8.5); docp.setTextColor(92, 96, 112); docp.text('Vendas e trocas atualizadas em ' + dataAtual(), nx, 47);
     const cx = [['Venda da rota', brl(r.v)], ['Troca', brl(r.t)], ['% troca', pctf(r.pct)], ['Variável', brl(r.variavel)], ['Premiação', brl(r.premio)], ['Total', brl(r.total)]];
     const bw = (W - 24 - 10) / 6;
     cx.forEach(([l, v], j) => { const x = 12 + j * (bw + 2); const tot = j === 5; docp.setFillColor(...(tot ? [244, 188, 28] : [241, 242, 245])); docp.roundedRect(x, 51, bw, 18, 2, 2, 'F'); docp.setFontSize(7); docp.setTextColor(92, 96, 112); docp.text(l.toUpperCase(), x + 3, 57); docp.setFontSize(tot ? 11 : 10); docp.setTextColor(23, 25, 37); docp.setFont(undefined, 'bold'); docp.text(v, x + 3, 65); docp.setFont(undefined, 'normal'); });

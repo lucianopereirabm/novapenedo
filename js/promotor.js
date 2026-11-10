@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-10.2';
+export const VERSAO_APP = '2026-11-10.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -395,6 +395,15 @@ function render() {
 /* ---------- minha variável (liberada pela gestão: só a do próprio promotor) ---------- */
 const brl = n => (n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const pctf = n => (n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+const FAIXAS_PADRAO = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
+// regras da premiação, iguais às de Configurações na Gestão
+function regrasPremio(fx, R, iFx, temVenda) {
+  const pc = n => String(n).replace('.', ',') + '%';
+  return `<div class="card stack" style="gap:6px"><div class="label">Regras da premiação sobre troca (troca ÷ venda da rota)</div>
+    <table class="num" style="font-size:13px;width:100%"><thead><tr><th style="text-align:left">% de troca no mês</th><th class="r">Premiação</th></tr></thead><tbody>${fx.map((f, i) => `<tr${i === iFx ? ' style="background:#E9F7EF;font-weight:700"' : ''}><td>${i ? 'de ' + pc(fx[i - 1].ate) + ' até menos de ' + pc(f.ate) : 'menos de ' + pc(f.ate)}${i === iFx ? ' ← você' : ''}</td><td class="r">${brl(f.valor)}</td></tr>`).join('')}
+    <tr${temVenda && iFx === -1 ? ' style="background:#FDECEC;font-weight:700"' : ''}><td>${fx.length ? pc(fx[fx.length - 1].ate) + ' ou mais' : ''}${temVenda && iFx === -1 ? ' ← você' : ''}</td><td class="r">${brl(0)}</td></tr></tbody></table>
+    <div class="muted" style="font-size:12px;line-height:1.45">Troca = troca do cliente + troca ERP. Variável da rota: ${brl(R.base)} quando a rota é cumprida${R.meta ? `, proporcional à venda até o mínimo de ${brl(R.meta)} (ex.: vendeu metade do mínimo, recebe metade)` : ''}. ${R.prop ? 'A premiação também é proporcional à venda até o mínimo.' : 'A premiação é paga cheia, sem proporção.'} Faltas/atraso marcados zeram a premiação.</div></div>`;
+}
 async function minhaVariavel(mesSel) {
   abreModal('<div class="spread"><h3>💰 Minha variável</h3><button class="btn ghost" id="mv-x">Fechar</button></div><div id="mv-c" class="muted">Carregando…</div>');
   $('#mv-x').onclick = fechaModal;
@@ -402,7 +411,12 @@ async function minhaVariavel(mesSel) {
   try { lista = (await getDocs(query(collection(db, 'minhaVariavel'), where('promotorId', '==', S.pid)))).docs.map(d => d.data()).sort((a, b) => b.mes.localeCompare(a.mes)); }
   catch (e) { const c = $('#mv-c'); if (c) c.textContent = erroMsg(e); return; }
   const c = $('#mv-c'); if (!c) return;
-  if (!lista.length) { c.innerHTML = '<div class="empty"><b>Ainda não liberada</b>Quando o supervisor fechar a variável do mês, ela aparece aqui com a venda e a troca de cada cliente da sua rota.</div>'; return; }
+  if (!lista.length) {
+    let R = { base: 250, meta: 70000, prop: false }; try { const g = await getDoc(doc(db, 'config', 'variavel')); if (g.exists()) R = Object.assign(R, g.data()); } catch (e) {}
+    c.className = 'stack'; c.style.gap = '12px';
+    c.innerHTML = '<div class="empty"><b>Ainda não liberada</b>Quando o supervisor fechar a variável do mês, ela aparece aqui com a venda e a troca de cada cliente da sua rota.</div>' + regrasPremio(FAIXAS_PADRAO.map(([ate, valor]) => ({ ate, valor })), R, -2, false);
+    return;
+  }
   const r = lista.find(x => x.mes === mesSel) || lista[0];
   const fx = r.faixas || []; const pc = n => String(n).replace('.', ',') + '%';
   const iFx = r.v ? fx.findIndex(f => r.pct < f.ate) : -1;
@@ -418,10 +432,7 @@ async function minhaVariavel(mesSel) {
       <div><span class="label">Variável da rota</span><b>${brl(r.variavel)}</b></div><div><span class="label">Premiação sobre troca</span><b>${brl(r.premio)}</b></div></div>
     ${!r.cumprida ? '<div class="note crit">Rota não cumprida no mês: a variável da rota não foi paga.</div>' : ''}${r.zerar ? '<div class="note crit">Premiação zerada por falta/atraso no mês.</div>' : ''}
     ${r.fator < 1 ? `<div class="note warn">A venda da rota ficou em ${Math.round(r.fator * 100)}% do mínimo de ${brl(r.regras.meta)}: a variável${r.regras.prop ? ' e a premiação foram pagas' : ' foi paga'} na mesma proporção.</div>` : ''}
-    <div class="card stack" style="gap:6px"><div class="label">Premiação sobre troca (troca ÷ venda da rota)</div>
-      <table class="num" style="font-size:13px;width:100%"><tbody>${fx.map((f, i) => `<tr${i === iFx ? ' style="background:#E9F7EF;font-weight:700"' : ''}><td>${i ? 'de ' + pc(fx[i - 1].ate) + ' a menos de ' + pc(f.ate) : 'menos de ' + pc(f.ate)}${i === iFx ? ' ← você' : ''}</td><td class="r">${brl(f.valor)}</td></tr>`).join('')}
-      <tr${r.v && iFx === -1 ? ' style="background:#FDECEC;font-weight:700"' : ''}><td>${fx.length ? pc(fx[fx.length - 1].ate) + ' ou mais' : ''}${r.v && iFx === -1 ? ' ← você' : ''}</td><td class="r">${brl(0)}</td></tr></tbody></table>
-      <div class="muted" style="font-size:12px">Troca = troca do cliente + troca ERP. Variável da rota: ${brl(r.regras.base)} com a rota cumprida, proporcional à venda até ${brl(r.regras.meta)}.</div></div>
+    ${regrasPremio(fx, r.regras || {}, iFx, !!r.v)}
     ${dica}
     <div class="card stack" style="gap:4px"><div class="label">Seus clientes (${r.clientes.length})</div>
       ${r.clientes.map(x => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px;align-items:flex-start"><span style="min-width:0"><b>${h(x.nome)}</b><span class="muted" style="display:block;font-size:12px">${h(x.cod)}${x.cidade ? ' · ' + h(x.cidade) : ''}</span></span>
