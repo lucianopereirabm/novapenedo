@@ -1,7 +1,7 @@
 // Reconhecimento de rosto (roda no próprio celular/computador; nada é enviado para fora)
 // Modelos em /models, biblioteca face-api (MIT) em /lib.
 let fa = null, pronto = null;
-export const LIMITE = 0.5; // distância máxima para considerar a mesma pessoa (quanto menor, mais parecido)
+export const LIMITE = 0.62; // (antes 0.5) ajustado em 11/11/2026 pelas selfies reais: a própria pessoa fica entre 0,30 e 0,60; // distância máxima para considerar a mesma pessoa (quanto menor, mais parecido)
 
 export function carregaRosto() {
   if (!pronto) pronto = (async () => {

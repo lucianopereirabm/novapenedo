@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.12';
+const VERSAO_GESTAO = '2026-11-11.13';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -135,7 +135,7 @@ function iniciaAlertas() {
     if (!AL.pronto) { Object.entries(m).forEach(([k, v]) => { if (v.checkin) alMarca('in-' + k); if (v.status === 'nao_visitada') alMarca('nv-' + k); }); AL.pronto = true; } // o que já estava feito ao abrir não avisa
     else Object.entries(m).forEach(([k, v]) => {
       const nome = prim(v.promotorId);
-      if (v.checkin) notifica('in-' + k, `📍 ${nome} chegou na loja`, `${v.lojaNome || 'Loja'} às ${hm(v.checkin)}${foraLoja(v) ? ` · ⚠️ fora da loja (${v.distIn} m)` : ''}${v.rostoOk === false ? ' · ⚠️ rosto não confere' : ''}`);
+      if (v.checkin) notifica('in-' + k, `📍 ${nome} chegou na loja`, `${v.lojaNome || 'Loja'} às ${hm(v.checkin)}${foraLoja(v) ? ` · ⚠️ fora da loja (${v.distIn} m)` : ''}${rostoRuim(v) ? ' · ⚠️ rosto não confere' : ''}`);
       if (v.status === 'nao_visitada') notifica('nv-' + k, `🚫 ${nome} não visitou`, `${v.lojaNome || 'Loja'}: ${v.motivo || ''}`);
     });
     AL.vis = m; verificaInicio();
@@ -277,7 +277,7 @@ function ultimoEvento(d) {
   const ev = [];
   d.paradas.forEach(x => { const v = x.v; if (!v) return; const n = `${x.extra ? '' : x.ordem + 'ª · '}${h(x.nome)}`;
     if (v.status === 'nao_visitada') ev.push({ t: v.registrado || 0, html: `<span class="ic-ev no">✕</span> Não visitou <b>${n}</b> · ${h(v.motivo || '')} · ${hm(v.registrado)}` });
-    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${v.rostoOk === false ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${foraLoja(v) ? ` · <span style="color:var(--crit)">⚠️ fora da loja (${v.distIn} m)</span>` : ''}` });
+    else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${rostoRuim(v) ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${foraLoja(v) ? ` · <span style="color:var(--crit)">⚠️ fora da loja (${v.distIn} m)</span>` : ''}` });
       if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
   const jr = (P.jor || {})[d.pid];
   if (jr && jr.almocoInicio) ev.push({ t: jr.almocoInicio, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Saiu para o almoço às ${hm(jr.almocoInicio)}` });
@@ -610,7 +610,10 @@ function enquadra(pts) { if (P.ajustar && pts.length) { P.mapa.fitBounds(pts, { 
 // Ponto da loja no mapa: exato (check-in/manual) ou aproximado (pelo endereço). O raio do check-in usa só o exato.
 // check-in fora da loja: passou do limite gravado na visita (150 m com local exato; folga maior com local aproximado)
 // alerta ainda não tratado pela gestão (rosto diferente ou check-in fora da loja)
-const temAlerta = v => !!v && (v.rostoOk === false || v.rostoOutOk === false || foraLoja(v) || foraSaida(v));
+// rosto: vale o limite atual (recalcula as visitas antigas com a régua nova)
+const rostoRuim = v => !!v && (typeof v.rostoDist === 'number' ? v.rostoDist > LIMITE : v.rostoOk === false);
+const rostoRuimOut = v => !!v && (typeof v.rostoOutDist === 'number' ? v.rostoOutDist > LIMITE : v.rostoOutOk === false);
+const temAlerta = v => !!v && (rostoRuim(v) || rostoRuimOut(v) || foraLoja(v) || foraSaida(v));
 const alertaAberto = v => temAlerta(v) && !v.alertaTratado;
 const foraLoja = v => !!v && v.distIn != null && v.distIn > (v.limite || S.raio);
 const foraSaida = v => !!v && v.distOut != null && (v.foraRaioOut != null ? v.foraRaioOut : v.distOut > (v.limiteOut || v.limite || S.raio));
@@ -701,7 +704,7 @@ function renderDetalhe(d) {
   const linhas = d.paradas.map((x, ix) => (conectores[ix] || '') + (() => {
     const v = x.v; const st = !v ? '<span class="pill pend">Pendente</span>' : v.status === 'concluida' ? '<span class="pill ok">Concluída</span>' : v.status === 'nao_visitada' ? `<span class="pill no">Não visitada</span>` : '<span class="pill live">Em loja</span>';
     const al = !v || v.status === 'nao_visitada' ? (v ? `<span class="muted" style="font-size:12px">${h(v.motivo)}</span>` : '') :
-      [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${foraLoja(v) ? 'no' : ''}">${foraLoja(v) ? '⚠️ fora da loja · ' : ''}${v.distIn} m${v.localAprox ? ' (aprox.)' : ''}</span>` : ''].join(' ');
+      [rostoRuim(v) ? '<span class="tag no">rosto ≠ cadastro</span>' : '', v.semCoord ? '<span class="tag y" title="loja sem local exato cadastrado">sem local</span>' : v.distIn != null ? `<span class="tag ${foraLoja(v) ? 'no' : ''}">${foraLoja(v) ? '⚠️ fora da loja · ' : ''}${v.distIn} m${v.localAprox ? ' (aprox.)' : ''}</span>` : ''].join(' ');
     const cls = !v ? 'pend' : v.status === 'concluida' ? 'ok' : v.status === 'nao_visitada' ? 'no' : 'live';
     return `<button class="parada ${cls}" data-v="${h(x.id)}"><span class="pa-n">${x.extra ? '+' : x.ordem}</span>
       <span class="pa-t"><b>${h(x.nome)}</b><span class="muted">${h(x.codigo || '')}${x.bairro ? ' · ' + h(x.bairro) : ''}${x.extra ? ' · fora da rota' : ''}</span>${al.trim() ? `<span class="pa-c">${al}</span>` : ''}</span>
@@ -861,7 +864,7 @@ function kpiLista(k, dias) {
   } else if (k === 'nao') {
     corpo = `<div class="paradas">${dias.flatMap(d => d.paradas.filter(x => x.v && x.v.status === 'nao_visitada').map(x => linha(d, x, `<span class="tag no">${h(x.v.motivo || 'sem motivo')}</span>${x.v.obs ? ' <span class="muted" style="font-size:12px">' + h(x.v.obs) + '</span>' : ''}`))).join('') || '<div class="muted">Nenhuma loja não visitada.</div>'}</div>`;
   } else if (k === 'al') {
-    const tags = v => [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', foraSaida(v) ? `<span class="tag no">⚠️ saída fora da loja (${v.distOut} m)</span>` : '', v.rostoOutOk === false ? '<span class="tag no">rosto ≠ na saída</span>' : '', foraLoja(v) ? `<span class="tag no">⚠️ fora da loja · ${v.distIn} m</span>` : ''].join(' ');
+    const tags = v => [rostoRuim(v) ? '<span class="tag no">rosto ≠ cadastro</span>' : '', foraSaida(v) ? `<span class="tag no">⚠️ saída fora da loja (${v.distOut} m)</span>` : '', rostoRuimOut(v) ? '<span class="tag no">rosto ≠ na saída</span>' : '', foraLoja(v) ? `<span class="tag no">⚠️ fora da loja · ${v.distIn} m</span>` : ''].join(' ');
     const todos = dias.flatMap(d => d.paradas.filter(x => temAlerta(x.v)).map(x => [d, x]));
     const ab = todos.filter(([, x]) => !x.v.alertaTratado), tr = todos.filter(([, x]) => x.v.alertaTratado);
     const acoes = (d, x) => S.leitura ? '' : `<div class="row" style="gap:6px;padding:0 4px 10px 44px;flex-wrap:wrap"><input type="text" placeholder="Observação (opcional): ex. falou com o gerente, GPS falhou…" data-ao="${h(x.id)}" style="flex:1 1 220px;font-size:13px;padding:6px 8px">${x.v.gpsIn ? `<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${x.v.gpsIn.lat},${x.v.gpsIn.lng}">🗺 Ver GPS no mapa</a>` : ''}${foraLoja(x.v) && x.v.gpsIn ? `<button class="btn sm" data-at-loc="${h(x.id)}" title="O promotor estava na loja: o ponto cadastrado é que estava errado">📍 Corrigir local da loja</button>` : ''}${foraSaida(x.v) && x.v.gpsOut ? `<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${x.v.gpsOut.lat},${x.v.gpsOut.lng}">🗺 GPS da saída</a>${!foraLoja(x.v) ? '' : ''}<button class="btn sm" data-at-locs="${h(x.id)}" title="Usar o GPS do check-out como local exato da loja">📍 Corrigir local com a saída</button>` : ''}<button class="btn sm" data-at-ok="${h(x.id)}">✓ Justificado</button><button class="btn sm danger" data-at-ir="${h(x.id)}">✗ Irregular</button></div>`;
@@ -926,9 +929,9 @@ async function detalheVisita(date, id, vInfo) {
     ${v.status === 'nao_visitada' ? `<div class="note warn"><b>Não visitada:</b> ${h(v.motivo)}${v.obs ? ' — ' + h(v.obs) : ''}</div>` :
     `<div class="times num"><div><span class="label">Entrada</span><b>${hm(v.checkin)}</b></div><div><span class="label">Saída</span><b>${hm(v.checkout)}</b></div><div><span class="label">Tempo</span><b>${dur(v.checkin, v.checkout)}</b></div></div>
      <div class="note ${v.semCoord ? 'warn' : foraLoja(v) ? 'crit' : 'ok'}">${v.gpsIn ? `Check-in em ${v.gpsIn.lat.toFixed(5)}, ${v.gpsIn.lng.toFixed(5)} (precisão ${v.gpsIn.prec} m)` : 'Sem GPS no check-in'}${v.distIn != null ? ` · ${v.distIn} m ${v.localAprox ? 'do endereço (local aproximado, tolerância ' + (v.limite || 500) + ' m)' : 'da loja'}` : ''}${foraLoja(v) ? ' · <b>⚠️ fora da loja</b>' : ''}${v.semCoord ? '<br>A loja não tinha localização cadastrada.' : ''}</div>
-     ${v.checkout ? `<div class="note ${foraSaida(v) ? 'crit' : v.distOut != null ? 'ok' : 'warn'}">${v.gpsOut ? `Check-out em ${v.gpsOut.lat.toFixed(5)}, ${v.gpsOut.lng.toFixed(5)} (precisão ${v.gpsOut.prec} m)` : 'Sem GPS no check-out'}${v.distOut != null ? ` · ${v.distOut} m ${v.localAprox ? 'do endereço' : 'da loja'}` : ''}${foraSaida(v) ? ' · <b>⚠️ saída fora da loja</b>' : ''}${v.rostoOutOk === false ? ' · <b>⚠️ rosto da selfie de saída não confere</b>' : v.rostoOutOk ? ' · rosto da saída confere' : ''}${v.gpsOut ? ` · <a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsOut.lat},${v.gpsOut.lng}">ver no mapa</a>` : ''}</div>` : ''}
+     ${v.checkout ? `<div class="note ${foraSaida(v) ? 'crit' : v.distOut != null ? 'ok' : 'warn'}">${v.gpsOut ? `Check-out em ${v.gpsOut.lat.toFixed(5)}, ${v.gpsOut.lng.toFixed(5)} (precisão ${v.gpsOut.prec} m)` : 'Sem GPS no check-out'}${v.distOut != null ? ` · ${v.distOut} m ${v.localAprox ? 'do endereço' : 'da loja'}` : ''}${foraSaida(v) ? ' · <b>⚠️ saída fora da loja</b>' : ''}${rostoRuimOut(v) ? ' · <b>⚠️ rosto da selfie de saída não confere</b>' : v.rostoOutOk ? ' · rosto da saída confere' : ''}${v.gpsOut ? ` · <a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsOut.lat},${v.gpsOut.lng}">ver no mapa</a>` : ''}</div>` : ''}
      ${linhaEnvio(v)}
-     ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
+     ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${rostoRuim(v) ? 'crit' : !rostoRuim(v) && typeof v.rostoDist === 'number' ? 'ok' : ''}" style="flex:1">${rostoRuim(v) ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : !rostoRuim(v) && typeof v.rostoDist === 'number' ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
      ${v.gpsIn && loja ? `<div class="row">${S.leitura ? '' : '<button class="btn sm" id="md-local">Usar este ponto como local da loja</button>'}<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
      ${Object.keys(resp).some(k => resp[k]) ? `<div><div class="label">Checklist</div>${Object.keys(resp).filter(k => resp[k]).map(k => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(k)}</span><b>${resp[k] === 'sim' ? 'Sim' : 'Não'}</b></div>`).join('') || '<div class="muted">Sem respostas.</div>'}</div>` : ''}
      ${(() => { // pesquisa de preço: mostra o que foi respondido (itens atuais e de listas anteriores)
