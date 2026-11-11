@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.2';
+const VERSAO_GESTAO = '2026-11-11.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -94,7 +94,8 @@ const promNome = id => (S.promotores.find(p => p.id === id) || {}).nome || 'Sem 
 const prim = id => promNome(id).split(' ')[0];
 const corDe = id => CORES[Math.max(0, S.promotores.findIndex(p => p.id === id)) % CORES.length];
 const posDia = (l, wd) => { const o = l.ordemDia && l.ordemDia[wd]; return typeof o === 'number' ? o : 1000 + (l.ordem || 999); };
-const lojasDoDiaWd = (pid, wd) => S.lojas.filter(l => l.promotorId === pid && (l.dias || []).map(Number).includes(wd)).sort((a, b) => posDia(a, wd) - posDia(b, wd));
+const rotaDoPromotor = pid => (S.promotores.find(p => p.id === pid) || {}).espelhoDe || pid; // usuário de teste simula a rota de outro
+const lojasDoDiaWd = (pid, wd) => S.lojas.filter(l => l.promotorId === rotaDoPromotor(pid) && (l.dias || []).map(Number).includes(wd)).sort((a, b) => posDia(a, wd) - posDia(b, wd));
 const lojasDoDia = (pid, date) => lojasDoDiaWd(pid, diaSemana(date));
 const endCompleto = l => [l.endereco, l.bairro, [l.municipio, l.uf].filter(Boolean).join(' - '), l.cep ? 'CEP ' + l.cep : ''].filter(Boolean).join(', ');
 const cod = l => l && l.codigo ? `<span class="num muted">${h(l.codigo)}</span> · ` : '';
@@ -306,7 +307,7 @@ function jornadaTxt(J) {
 const inicioControle = () => S.empresa.inicioControle || '2026-10-30'; // antes disso não havia app: não conta falta
 // início do controle de cada promotor: a data dele (ficha) ou, sem data, a geral. Antes disso é teste.
 const inicioDe = pid => { const p = S.promotores.find(x => x.id === pid); const g = inicioControle(); return p && p.inicioApp && p.inicioApp > g ? p.inicioApp : g; };
-const emTeste = (pid, d) => d < inicioDe(pid);
+const emTeste = (pid, d) => !!(S.promotores.find(p => p.id === pid) || {}).espelhoDe || d < inicioDe(pid);
 function diasDoMes(mes) { const [y, m] = mes.split('-').map(Number); const n = new Date(y, m, 0).getDate(); const hoje = ymd(new Date()); const ini = inicioControle(); return Array.from({ length: n }, (_, i) => `${mes}-${String(i + 1).padStart(2, '0')}`).filter(d => d <= hoje && d >= ini); }
 async function carregaMes(mes) {
   if (P.dadosMes[mes] && P.dadosMes[mes].ok) return P.dadosMes[mes];
@@ -1433,6 +1434,7 @@ function editaPromotor(p) {
     <label class="field"><span>Telefone</span><input type="tel" name="telefone" value="${h(p.telefone || '')}"></label>
     <label class="field"><span>E-mail</span><input type="email" name="email" value="${h(p.email || '')}"></label>
     <label class="field"><span>Início do uso do app (antes desta data é só teste: não conta banco de horas, faltas nem rota)</span><input type="date" name="inicioApp" value="${h(p.inicioApp || '')}"></label>
+    <label class="field"><span>Usuário de teste: usa a rota de (só simulação; não mexe no promotor escolhido, não conta banco de horas nem variável)</span><select name="espelhoDe"><option value="">— Não é usuário de teste —</option>${S.promotores.filter(x => x.id !== p.id && !x.espelhoDe && x.ativo !== false).map(x => `<option value="${h(x.id)}" ${p.espelhoDe === x.id ? 'selected' : ''}>${h(x.nome)}</option>`).join('')}</select></label>
     <label class="field"><span>Situação</span><select name="ativo"><option value="1" ${p.ativo !== false ? 'selected' : ''}>Ativo</option><option value="" ${p.ativo === false ? 'selected' : ''}>Inativo (não aparece nas rotas e não entra no app)</option></select></label>
     ${!novo ? `<div class="note ${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? 'ok' : 'warn'}" style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<span>Termos LGPD e do aparelho assinados em ${new Date(S.termos[p.id].assinadoEm).toLocaleString('pt-BR')}</span><span class="row" style="gap:6px"><button type="button" class="btn sm" id="ep-tpdf">Baixar PDF</button><button type="button" class="btn sm ghost danger" id="ep-tre">Pedir nova assinatura</button></span>` : '<span>Termos ainda não assinados. O app pede a assinatura no primeiro acesso do promotor.</span>'}</div>` : ''}
     <div id="ep-msg"></div>
@@ -1454,7 +1456,7 @@ function editaPromotor(p) {
   };
   $('#ep').onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
-    const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), inicioApp: String(f.get('inicioApp') || ''), atualizado: Date.now(),
+    const v = { nome: String(f.get('nome')).trim(), base: String(f.get('base')).trim(), telefone: String(f.get('telefone')).trim(), email: String(f.get('email')).trim(), ativo: !!f.get('ativo'), inicioApp: String(f.get('inicioApp') || ''), espelhoDe: String(f.get('espelhoDe') || ''), atualizado: Date.now(),
       endereco: String(f.get('endereco') || '').trim(), cidadeRes: String(f.get('cidadeRes') || '').trim(), ufRes: String(f.get('ufRes') || '').trim().toUpperCase(), cepRes: String(f.get('cepRes') || '').trim() };
     const mudouCasa = novo || v.endereco !== (p.endereco || '') || v.cidadeRes !== (p.cidadeRes || '') || v.cepRes !== (p.cepRes || '');
     const usuario = semAcento(String(f.get('usuario') || '').trim()).replace(/\s+/g, '');

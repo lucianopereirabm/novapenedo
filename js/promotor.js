@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-11.2';
+export const VERSAO_APP = '2026-11-11.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -104,6 +104,13 @@ onAuthStateChanged(auth, async user => {
 });
 
 /* ---------- portão do rosto: o app só abre com o rosto do promotor ---------- */
+// lojas da rota: as do próprio promotor, ou (usuário de teste) as do promotor que ele simula — só leitura, as visitas ficam no nome do teste
+let unsubLojas = null, rotaDe = null;
+function assinaLojas(pid) {
+  if (pid === rotaDe && unsubLojas) return; rotaDe = pid; if (unsubLojas) unsubLojas();
+  unsubLojas = onSnapshot(query(collection(db, 'lojas'), where('promotorId', '==', pid)), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); }, e => toast(erroMsg(e)));
+  S.unsub.push(() => { if (unsubLojas) { unsubLojas(); unsubLojas = null; rotaDe = null; } });
+}
 async function iniciar() {
   S.iniciado = true; show('carregando');
   try { const pr = await getDoc(doc(db, 'promotores', S.pid)); if (pr.exists()) lsSet('np.nome.' + S.pid, (pr.data().nome || '').split(' ')[0]); if (pr.exists() && pr.data().ativo === false) { show('v-semacesso'); $('#v-semacesso').innerHTML = '<b>Cadastro inativo</b>Seu cadastro está inativo. Fale com o supervisor.'; return; } } catch (e) {}
@@ -262,13 +269,14 @@ async function vinculaAparelho() {
 }
 function abreApp() {
   show('v-rota');
-  S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' }; $('#quem').innerHTML = `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`; render(); }));
+  S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' };
+    $('#quem').innerHTML = S.prom.espelhoDe ? `<b style="color:#F4BC1C">MODO TESTE</b>` : `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`;
+    assinaLojas(S.prom.espelhoDe || S.pid); render(); }));
   S.unsub.push(onSnapshot(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'dias', S.hoje, 'jornadas', S.pid), s => { S.jor = s.exists() ? s.data() : null; render(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists()) S.cfgApp = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; render(); }, () => {}));
   setInterval(() => { if (!$('#v-rota').hidden) render(); }, 60000);
-  S.unsub.push(onSnapshot(query(collection(db, 'lojas'), where('promotorId', '==', S.pid)), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); }, e => toast(erroMsg(e))));
   S.unsub.push(onSnapshot(query(collection(db, 'dias', S.hoje, 'visitas'), where('promotorId', '==', S.pid)), { includeMetadataChanges: true }, s => {
     const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.vis = m;
     S.pendVis = s.docs.filter(d => d.metadata && d.metadata.hasPendingWrites).length; rede();
@@ -377,7 +385,7 @@ function render() {
   const c = $('#v-rota'); const lojas = lojasHoje();
   const feitas = lojas.filter(l => { const v = S.vis[vid(l.id)]; return v && v.status !== 'em_loja'; }).length;
   const extras = Object.entries(S.vis).filter(([k, v]) => v.foraRota || k !== vid(v.lojaId)).sort((a, b) => (a[1].checkin || 0) - (b[1].checkin || 0));
-  let html = `<div><div class="label">Rota de ${DIAS_LONGO[wdHoje()]} · ${S.hoje.split('-').reverse().slice(0, 2).join('/')}</div><h2 class="num">${feitas} de ${lojas.length} lojas</h2></div>
+  let html = (S.prom && S.prom.espelhoDe ? `<div class="note warn"><b>Modo teste.</b> Você está usando a rota de outro promotor só para simular. Tudo o que fizer aqui fica no usuário de teste e não mexe na rota nem nos dados dele.</div>` : '') + `<div><div class="label">Rota de ${DIAS_LONGO[wdHoje()]} · ${S.hoje.split('-').reverse().slice(0, 2).join('/')}</div><h2 class="num">${feitas} de ${lojas.length} lojas</h2></div>
     <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}`;
   if (!lojas.length) html += `<div class="empty"><b>Sem lojas para hoje</b>Nenhuma loja está marcada para ${DIAS_LONGO[wdHoje()]} na sua rota.</div>`;
   else html += '<div class="stops">' + lojas.map((l, i) => {
