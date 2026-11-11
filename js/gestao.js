@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.8';
+const VERSAO_GESTAO = '2026-11-11.9';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -477,13 +477,33 @@ function tabelaLojasProduto(rs) {
     return `<tr><td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:.85em">${h(lj.cid)}</div></td><td class="r"><b>${r.x.falta ? '<span style="color:var(--crit)">ruptura</span>' : typeof r.x.preco === 'number' ? brl(r.x.preco) : '—'}</b></td>
       <td style="white-space:nowrap;background:${fundo};color:${cor}">${r.x.val && !r.x.falta ? `<b>${dataBR(r.x.val)}</b><div style="font-size:.85em">${faltamTxt(n)}</div>` : '—'}</td><td class="r">${r.x.qtd != null && !r.x.falta ? r.x.qtd + ' un' : '—'}</td><td>${h(promNome(r.v.promotorId))}</td><td style="white-space:nowrap">${dataBR(r.d)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
 }
-function abreProdutoPV(produto, soRuptura) {
-  let rs = filtraPV((VAL.todos || []).filter(r => r.produto === produto && (r.x.falta || typeof r.x.preco === 'number' || r.x.val)), true);
-  if (soRuptura) rs = rs.filter(r => r.x.falta);
-  const pr = rs.filter(r => !r.x.falta && typeof r.x.preco === 'number').map(r => r.x.preco); const rup = rs.filter(r => r.x.falta).length;
+// clique no produto: lojas daquele produto, só com o que interessa em cada módulo
+function linhasModo(r, modo) {
+  const lj = lojaDe(r); const tit = `${h(lj.cod)} · ${h(lj.nome)} <span class="muted" style="font-weight:500">· ${h(lj.cid)}</span>`; const quem = `${h(promNome(r.v.promotorId))} · ${dataBR(r.d)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}`;
+  if (modo === 'val') { const n = r.faltam; const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44';
+    return liPV(tit, [`<span class="pv-dest" style="color:${cor}">${dataBR(r.x.val)} · ${faltamTxt(n)}</span>${r.x.qtd != null ? ` <span class="pv-dest2">${r.x.qtd} un a vender</span>` : ''}`, quem], corFaixa(r)); }
+  if (modo === 'pq') return liPV(tit, [`<span class="pv-dest" style="color:${r._cor || 'var(--ink)'}">${brl(r.x.preco)}</span>${r._tag ? ` <span class="pv-tag" style="background:${r._cor}">${r._tag}</span>` : ''}`, quem], r._cor || 'var(--line)');
+  return liPV(tit, [quem], 'var(--crit)');
+}
+function abreProdutoPV(produto, modo, faixa) {
+  let rs = filtraPV((VAL.todos || []).filter(r => r.produto === produto), true);
+  let cab = '';
+  if (modo === 'val') {
+    rs = rs.filter(r => r.x.val && !r.x.falta && (faixa === 'r' ? r.faltam < 7 : faixa === 'a' ? r.faltam >= 7 && r.faltam < 10 : faixa === 'v' ? r.faltam >= 10 : true)).sort((a, b) => a.faltam - b.faltam || alfaLoja(a, b));
+    const q = rs.reduce((s, r) => s + (+r.x.qtd || 0), 0);
+    cab = `${rs.length} loja${rs.length === 1 ? '' : 's'} ${faixa === 'r' ? 'com menos de 7 dias' : faixa === 'a' ? 'com 7 a 9 dias' : 'com 10 dias ou mais'}${q ? ` · <b>${q} un a vender</b>` : ''}`;
+  } else if (modo === 'pq') {
+    rs = rs.filter(r => !r.x.falta && typeof r.x.preco === 'number').sort(alfaLoja);
+    const pr = rs.map(r => r.x.preco); const mn = Math.min(...pr), mx = Math.max(...pr), md = pr.reduce((s, x) => s + x, 0) / (pr.length || 1);
+    rs.forEach(r => { r._cor = pr.length > 1 && r.x.preco === mn ? '#1E7A44' : pr.length > 1 && r.x.preco === mx ? 'var(--crit)' : ''; r._tag = pr.length > 1 && r.x.preco === mn ? 'menor preço' : pr.length > 1 && r.x.preco === mx ? 'maior preço' : ''; });
+    cab = pr.length ? `${rs.length} loja${rs.length === 1 ? '' : 's'} · menor <b style="color:#1E7A44">${brl(mn)}</b> · maior <b style="color:var(--crit)">${brl(mx)}</b> · média <b>${brl(md)}</b>` : 'Nenhum preço lançado.';
+  } else {
+    rs = rs.filter(r => r.x.falta).sort(alfaLoja);
+    cab = `<b style="color:var(--crit)">${rs.length} loja${rs.length === 1 ? '' : 's'} em ruptura</b> (visitadas e sem o produto na gôndola)`;
+  }
   abreModal(`<div class="spread"><h3>${h(produto)}</h3><button class="btn ghost" id="pp-x">Fechar</button></div>
-    <div class="muted num" style="font-size:14px">${rs.length} loja${rs.length === 1 ? '' : 's'}${pr.length ? ` · preço ${brl(Math.min(...pr))} a ${brl(Math.max(...pr))} · média ${brl(pr.reduce((s, x) => s + x, 0) / pr.length)}` : ''}${rup ? ` · <b style="color:var(--crit)">${rup} em ruptura</b>` : ''}${soRuptura ? ' · mostrando só as rupturas' : ''}</div>
-    <div class="pv-big">${rs.length ? tabelaLojasProduto(rs) : '<div class="muted">Nenhuma loja.</div>'}</div>`);
+    <div class="muted num" style="font-size:14px">${cab}</div>
+    <div class="pv-big"><div class="pv-lista">${rs.length ? rs.map(r => linhasModo(r, modo)).join('') : '<div class="muted">Nenhuma loja.</div>'}</div></div>`);
   $('#pp-x').onclick = fechaModal; $('#modal-box').classList.add('largo');
 }
 function desenhaPV() {
@@ -495,64 +515,41 @@ function desenhaPV() {
   const proms = [...new Set(T.map(r => r.v.promotorId))].sort((a, b) => promNome(a).localeCompare(promNome(b)));
   $('#vf-loja').innerHTML = `<option value="">Todas as lojas (${lojas.length})</option>` + lojas.map(([id, l]) => `<option value="${h(id)}" ${VAL.f.loja === id ? 'selected' : ''}>${h(l.cod)} · ${h(l.nome)} · ${h(l.cid)}</option>`).join('');
   $('#vf-prom').innerHTML = `<option value="">Todos os promotores</option>` + proms.map(p => `<option value="${h(p)}" ${VAL.f.prom === p ? 'selected' : ''}>${h(promNome(p))}</option>`).join('');
-  const opSo = VAL.aba === 'rup' ? [['', 'Todos os produtos em ruptura']] : VAL.aba === 'val' ? [['', 'Todas as faixas'], ['r', 'Só vermelho (< 7 dias)'], ['a', 'Só amarelo (7 a 9 dias)'], ['ra', 'Vermelho e amarelo'], ['v', 'Só verde (10 dias ou mais)']] : [['', 'Preços e rupturas'], ['p', 'Só com preço'], ['r', 'Só rupturas']];
-  $('#vf-so').innerHTML = opSo.map(([k, t]) => `<option value="${k}" ${VAL.f.so === k ? 'selected' : ''}>${t}</option>`).join('');
+  const opSo = VAL.aba === 'val' ? [['', 'Todas as faixas'], ['r', 'Só vermelho (< 7 dias)'], ['a', 'Só amarelo (7 a 9 dias)'], ['ra', 'Vermelho e amarelo'], ['v', 'Só verde (10 dias ou mais)']] : null;
+  $('#vf-so').hidden = !opSo; if (!opSo) VAL.f.so = '';
+  if (opSo) $('#vf-so').innerHTML = opSo.map(([k, t]) => `<option value="${k}" ${VAL.f.so === k ? 'selected' : ''}>${t}</option>`).join('');
   box.className = 'stack';
-  // busca por produto: mostra o produto e, abaixo, cada loja com a última informação dele
-  const porProduto = () => {
-    if (!VAL.f.prod.trim()) return '';
-    let L = filtraPV(T).filter(r => r.x.falta || typeof r.x.preco === 'number' || r.x.val); const so = VAL.f.so;
-    if (VAL.aba === 'val' && so) L = L.filter(r => r.x.val && !r.x.falta && (so === 'r' ? r.faltam < 7 : so === 'a' ? r.faltam >= 7 && r.faltam < 10 : so === 'ra' ? r.faltam < 10 : r.faltam >= 10));
-    if (VAL.aba === 'pq' && so) L = L.filter(r => so === 'r' ? r.x.falta : !r.x.falta && typeof r.x.preco === 'number');
-    const g = new Map(); L.forEach(r => { if (!g.has(r.produto)) g.set(r.produto, []); g.get(r.produto).push(r); });
-    if (!g.size) return `<div class="card"><b>Nenhuma loja com informação de "${h(VAL.f.prod)}"</b><div class="muted" style="font-size:13px">Nos últimos ${VAL.dias} dias nenhum promotor lançou esse produto${VAL.f.loja || VAL.f.prom ? ' com os filtros escolhidos' : ''}.</div></div>`;
-    return [...g.entries()].sort((a, b) => alfaProd(a[0], b[0])).map(([p, rs]) => {
-      const pr = rs.filter(r => !r.x.falta && typeof r.x.preco === 'number').map(r => r.x.preco); const rup = rs.filter(r => r.x.falta).length;
-      return `<div class="card stack" style="gap:8px;border-left:5px solid var(--brand,#F4BC1C)"><div class="spread" style="flex-wrap:wrap;gap:6px"><h3 style="margin:0">${h(p)}</h3><span class="muted num" style="font-size:12.5px">${rs.length} loja${rs.length > 1 ? 's' : ''}${pr.length ? ` · preço ${brl(Math.min(...pr))} a ${brl(Math.max(...pr))} · média ${brl(pr.reduce((s, x) => s + x, 0) / pr.length)}` : ''}${rup ? ` · <b style="color:var(--crit)">${rup} ruptura${rup > 1 ? 's' : ''}</b>` : ''}</span></div>
-        ${tabelaLojasProduto(rs)}</div>`;
-    }).join('');
-  };
-  if (VAL.f.prod.trim() && VAL.aba !== 'rup') { box.innerHTML = `<div class="label">Resultado da busca por produto</div>${porProduto()}`; ligaPV(box); ligaCsv(); return; }
-  if (VAL.aba === 'rup') {
-    const R = filtraPV(T.filter(r => r.x.falta));
-    const g = new Map(); R.forEach(r => { if (!g.has(r.produto)) g.set(r.produto, []); g.get(r.produto).push(r); });
-    const lst = [...g.entries()].sort((a, b) => alfaProd(a[0], b[0]));
-    const nLojas = new Set(T.filter(r => filtraPV([r]).length).map(r => r.v.lojaId)).size;
-    box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${R.length}</b><span>Rupturas (loja × produto)</span></div><div class="kpi"><b>${lst.length}</b><span>Produtos com ruptura</span></div><div class="kpi"><b>${new Set(R.map(r => r.v.lojaId)).size}</b><span>Lojas com alguma ruptura</span></div></div>
-      <div class="card stack"><h3>🚫 Produtos em ruptura <span class="muted" style="font-weight:500;font-size:.8em">· clique no produto para ver as lojas</span></h3>${lst.length && celPV() ? `<div class="pv-lista">${lst.map(([p, rs]) => liPV(`${h(p)} <span class="muted">›</span>`, [`<b style="color:var(--crit)">${rs.length} loja${rs.length > 1 ? 's' : ''} em ruptura</b>${nLojas ? ` · ${Math.round(rs.length / nLojas * 100)}% das lojas` : ''} · última ${dataBR(rs.map(r => r.d).sort().pop()).slice(0, 5)}`], 'var(--crit)', `data-prod="${h(p)}" data-rup="1"`)).join('')}</div>` : lst.length ? `<div style="overflow-x:auto"><table class="num pv-tab"><thead><tr><th>Produto</th><th class="r">Lojas em ruptura</th><th class="r">% das lojas pesquisadas</th><th>Última pesquisa</th></tr></thead><tbody>${lst.map(([p, rs]) => { const ult = rs.map(r => r.d).sort().pop(); return `<tr class="pv-clic" data-prod="${h(p)}" data-rup="1"><td><b>${h(p)}</b> <span class="muted">›</span></td><td class="r"><b style="color:var(--crit)">${rs.length}</b></td><td class="r">${nLojas ? Math.round(rs.length / nLojas * 100) + '%' : '—'}</td><td>${dataBR(ult)}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted">Nenhuma ruptura com esses filtros.</div>'}</div>`;
-    ligaPV(box); ligaCsv(); return;
-  }
+  const so = VAL.f.so;
+  const lista = (itens, vazio) => itens.length ? `<div class="pv-lista">${itens.join('')}</div>` : `<div class="muted" style="font-size:14px">${vazio}</div>`;
+  const grupo = L => { const g = new Map(); L.forEach(r => { if (!g.has(r.produto)) g.set(r.produto, []); g.get(r.produto).push(r); }); return [...g.entries()].sort((a, b) => alfaProd(a[0], b[0])); };
   if (VAL.aba === 'val') {
-    const so = VAL.f.so; const L = filtraPV(VAL.cache || []); const verdes = filtraPV(VAL.verdes || []);
-    const verm = ['', 'r', 'ra'].includes(so) ? L.filter(r => r.faltam < 7) : [], amar = ['', 'a', 'ra'].includes(so) ? L.filter(r => r.faltam >= 7) : [], verd = ['', 'v'].includes(so) ? verdes : [];
-    const qt = lst => lst.reduce((s, r) => s + (+r.x.qtd || 0), 0);
-    const tabela = (lst, cor, fundo) => lst.length && celPV() ? `<div class="pv-lista">${lst.map(r => { const lj = lojaDe(r); return liPV(`${h(r.produto)} <span class="muted">›</span>`, [`<span style="color:var(--ink)">${h(lj.cod)} · ${h(lj.nome)}</span> · ${h(lj.cid)}`, [valTxt(r), r.x.qtd ? `<b>${r.x.qtd} un a vender</b>` : '', precoTxt(r)].filter(Boolean).join(' · '), `${h(promNome(r.v.promotorId))} · ${dataBR(r.d).slice(0, 5)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}`], cor, `data-prod="${h(r.produto)}"`); }).join('')}</div>` : lst.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Validade</th><th>Produto</th><th class="r">Qtd a vender</th><th>Loja</th><th>Promotor</th><th>Visto em</th></tr></thead><tbody>${lst.map(r => { const lj = lojaDe(r); return `<tr style="background:${fundo}">
-      <td style="white-space:nowrap"><b style="color:${cor}">${dataBR(r.x.val)}</b><div style="font-size:12px;color:${cor}">${faltamTxt(r.faltam)}</div></td>
-      <td class="pv-clic" data-prod="${h(r.produto)}"><b>${h(r.produto)}</b> <span class="muted">›</span></td><td class="r"><b>${r.x.qtd ? r.x.qtd + ' un' : '—'}</b></td><td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:12px">${h(lj.cid)}</div></td><td>${h(promNome(r.v.promotorId))}</td>
-      <td style="white-space:nowrap">${dataBR(r.d).slice(0, 5)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nenhum produto nesta faixa.</div>';
-    const nV = L.filter(r => r.faltam < 7), nA = L.filter(r => r.faltam >= 7);
-    box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${nV.length}</b><span>Menos de 7 dias (vermelho)${qt(nV) ? ` · ${qt(nV)} un a vender` : ''}</span></div><div class="kpi"><b style="color:#9A6B00">${nA.length}</b><span>De 7 a 9 dias (amarelo)${qt(nA) ? ` · ${qt(nA)} un a vender` : ''}</span></div><div class="kpi"><b style="color:#1E7A44">${verdes.length}</b><span>10 dias ou mais (verde)</span></div></div>
-      ${['', 'r', 'ra'].includes(so) ? `<div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🔴 Menos de 7 dias · data apertada</h3>${tabela(verm, 'var(--crit)', '#FDECEC')}</div>` : ''}
-      ${['', 'a', 'ra'].includes(so) ? `<div class="card stack" style="border-left:5px solid #E0A800"><h3 style="color:#9A6B00">🟡 Menos de 10 dias</h3>${tabela(amar, '#9A6B00', '#FFF6D6')}</div>` : ''}
-      ${['', 'v'].includes(so) ? `<div class="card stack" style="border-left:5px solid #2E9D5B"><h3 style="color:#1E7A44">🟢 10 dias ou mais · validade boa</h3>${tabela(verd, '#1E7A44', '#E9F7EF')}</div>` : ''}
-      <div class="muted" style="font-size:12px">O promotor informa na pesquisa de preço a validade mais próxima e a quantidade de unidades com essa validade na gôndola (a vender). Quando ele volta na loja e informa de novo, vale a informação mais recente.</div>`;
+    // só o produto; clicando, as lojas daquela faixa
+    const L = filtraPV((VAL.todos || []).filter(r => r.x.val && !r.x.falta));
+    const fx = [['r', '🔴 Menos de 7 dias · data apertada', 'var(--crit)', r => r.faltam < 7], ['a', '🟡 De 7 a 9 dias', '#9A6B00', r => r.faltam >= 7 && r.faltam < 10], ['v', '🟢 10 dias ou mais · validade boa', '#1E7A44', r => r.faltam >= 10]];
+    const mostra = k => !so || so === k || (so === 'ra' && k !== 'v');
+    const conta = fx.map(([k, , , f]) => L.filter(f));
+    box.innerHTML = `<div class="kpis num">${fx.map(([k, t, cor], i) => `<div class="kpi"><b style="color:${cor}">${grupo(conta[i]).length}</b><span>${k === 'r' ? 'Produtos com menos de 7 dias' : k === 'a' ? 'Produtos com 7 a 9 dias' : 'Produtos com 10 dias ou mais'}</span></div>`).join('')}</div>
+      ${fx.map(([k, t, cor], i) => mostra(k) ? `<div class="card stack" style="border-left:5px solid ${cor}"><h3 style="color:${cor}">${t}</h3>${lista(grupo(conta[i]).map(([p, rs]) => { const q = rs.reduce((s, r) => s + (+r.x.qtd || 0), 0); return liPV(`${h(p)} <span class="muted">›</span>`, [`${rs.length} loja${rs.length > 1 ? 's' : ''}${k !== 'v' && q ? ` · <b style="color:${cor}">${q} un a vender</b>` : ''} · mais próxima ${dataBR(rs.map(r => r.x.val).sort()[0]).slice(0, 5)}`], cor, `data-prod="${h(p)}" data-modo="val" data-fx="${k}"`); }), 'Nenhum produto nesta faixa.')}</div>` : '').join('')}
+      <div class="muted" style="font-size:12.5px">Toque no produto para ver as lojas daquela faixa, com a validade e a quantidade a vender.</div>`;
+  } else if (VAL.aba === 'pq') {
+    // só preço: produto → lojas com o preço
+    const L = filtraPV((VAL.todos || []).filter(r => !r.x.falta && typeof r.x.preco === 'number'));
+    const G = grupo(L);
+    box.innerHTML = `<div class="kpis num"><div class="kpi"><b>${G.length}</b><span>Produtos com preço</span></div><div class="kpi"><b>${L.length}</b><span>Preços lançados</span></div><div class="kpi"><b>${new Set(L.map(r => r.v.lojaId)).size}</b><span>Lojas pesquisadas</span></div></div>
+      <div class="card stack"><h3>💲 Preço de ponta por produto</h3>${lista(G.map(([p, rs]) => { const pr = rs.map(r => r.x.preco); const mn = Math.min(...pr), mx = Math.max(...pr);
+        return liPV(`${h(p)} <span class="muted">›</span>`, [`<span class="pv-dest2">${pr.length > 1 && mn !== mx ? `<b style="color:#1E7A44">${brl(mn)}</b> a <b style="color:var(--crit)">${brl(mx)}</b>` : `<b>${brl(mn)}</b>`}</span> · média <b>${brl(pr.reduce((s, x) => s + x, 0) / pr.length)}</b> · ${rs.length} loja${rs.length > 1 ? 's' : ''}`], '#F4BC1C', `data-prod="${h(p)}" data-modo="pq"`); }), 'Nenhum preço lançado com esses filtros.')}</div>
+      <div class="muted" style="font-size:12.5px">Toque no produto para ver o preço em cada loja (menor preço em verde, maior em vermelho).</div>`;
   } else {
-    let L = filtraPV(T.filter(r => r.x.falta || typeof r.x.preco === 'number'));
-    if (VAL.f.so === 'p') L = L.filter(r => !r.x.falta); if (VAL.f.so === 'r') L = L.filter(r => r.x.falta);
-    // resumo por produto
-    const porProd = new Map(); L.forEach(r => { const g = porProd.get(r.produto) || { precos: [], rup: 0 }; if (r.x.falta) g.rup++; else g.precos.push(r.x.preco); porProd.set(r.produto, g); });
-    const resumo = [...porProd.entries()].sort((a, b) => alfaProd(a[0], b[0]));
-    const nRup = L.filter(r => r.x.falta).length;
-    box.innerHTML = `<div class="kpis num"><div class="kpi"><b>${L.length - nRup}</b><span>Preços lançados</span></div><div class="kpi"><b style="color:var(--crit)">${nRup}</b><span>Rupturas</span></div><div class="kpi"><b>${new Set(L.map(r => r.v.lojaId)).size}</b><span>Lojas pesquisadas</span></div></div>
-      <div class="card stack"><h3>Resumo por produto</h3>${resumo.length && celPV() ? `<div class="pv-lista">${resumo.map(([p, g]) => { const n = g.precos.length; return liPV(`${h(p)} <span class="muted">›</span>`, [n ? `${n} loja${n > 1 ? 's' : ''} com preço · <b>${brl(Math.min(...g.precos))}</b> a <b>${brl(Math.max(...g.precos))}</b> · média ${brl(g.precos.reduce((s, x) => s + x, 0) / n)}` : 'sem preço lançado', g.rup ? `<b style="color:var(--crit)">${g.rup} ruptura${g.rup > 1 ? 's' : ''}</b>` : ''], g.rup ? 'var(--crit)' : '#2E9D5B', `data-prod="${h(p)}"`); }).join('')}</div>` : resumo.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Produto</th><th class="r">Lojas c/ preço</th><th class="r">Menor</th><th class="r">Média</th><th class="r">Maior</th><th class="r">Rupturas</th></tr></thead><tbody>${resumo.map(([p, g]) => { const n = g.precos.length; return `<tr class="pv-clic" data-prod="${h(p)}" title="Ver as lojas"><td><b>${h(p)}</b> <span class="muted">›</span></td><td class="r">${n}</td><td class="r">${n ? brl(Math.min(...g.precos)) : '—'}</td><td class="r">${n ? brl(g.precos.reduce((s, x) => s + x, 0) / n) : '—'}</td><td class="r">${n ? brl(Math.max(...g.precos)) : '—'}</td><td class="r" style="color:${g.rup ? 'var(--crit)' : 'inherit'}">${g.rup || '—'}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nenhuma pesquisa lançada com esses filtros.</div>'}</div>
-      <div class="card stack"><h3>Por loja</h3>${L.length && celPV() ? (() => { const gl = new Map(); L.forEach(r => { if (!gl.has(r.v.lojaId)) gl.set(r.v.lojaId, []); gl.get(r.v.lojaId).push(r); }); return `<div class="pv-lista">${[...gl.values()].sort((a, b) => alfaLoja(a[0], b[0])).map(rs => { const lj = lojaDe(rs[0]); const rup = rs.filter(r => r.x.falta).length; return `<details class="pv-li" style="border-left-color:${rup ? 'var(--crit)' : '#2E9D5B'}"><summary class="pv-t">${h(lj.cod)} · ${h(lj.nome)} <span class="muted" style="font-weight:500">· ${h(lj.cid)}</span><div class="pv-s" style="font-weight:500">${rs.length - rup} preço${rs.length - rup === 1 ? '' : 's'}${rup ? ` · <b style="color:var(--crit)">${rup} ruptura${rup > 1 ? 's' : ''}</b>` : ''} · ${h(promNome(rs[0].v.promotorId))} · ${dataBR(rs.map(r => r.d).sort().pop()).slice(0, 5)} <span class="muted">(toque para ver)</span></div></summary>${rs.sort((a, b) => alfaProd(a.produto, b.produto)).map(r => `<div class="pv-s pv-prod" data-prod="${h(r.produto)}"><span>${h(r.produto)}</span><span style="text-align:right">${precoTxt(r)}${r.x.val && !r.x.falta ? '<br>' + valTxt(r) : ''}${r.x.qtd != null && !r.x.falta ? ` · ${r.x.qtd} un` : ''}</span></div>`).join('')}</details>`; }).join('')}</div>`; })() : L.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Loja</th><th>Produto</th><th class="r">Preço de ponta</th><th>Validade</th><th>Promotor</th><th>Data</th></tr></thead><tbody>${L.slice().sort((a, b) => alfaLoja(a, b) || alfaProd(a.produto, b.produto)).map(r => { const lj = lojaDe(r); const cor = r.faltam == null ? '' : r.faltam < 7 ? 'var(--crit)' : r.faltam < 10 ? '#9A6B00' : '#1E7A44'; return `<tr>
-        <td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:12px">${h(lj.cid)}</div></td><td class="pv-clic" data-prod="${h(r.produto)}">${h(r.produto)} <span class="muted">›</span></td>
-        <td class="r"><b>${r.x.falta ? '<span style="color:var(--crit)">ruptura</span>' : brl(r.x.preco)}</b></td>
-        <td style="white-space:nowrap;color:${cor}">${r.x.val && !r.x.falta ? dataBR(r.x.val) + (r.x.qtd ? ` · ${r.x.qtd} un` : '') : '—'}</td><td>${h(promNome(r.v.promotorId))}</td><td style="white-space:nowrap">${dataBR(r.d).slice(0, 5)}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nada lançado com esses filtros.</div>'}</div>`;
+    // ruptura: produto → lojas visitadas sem o produto
+    const L = filtraPV((VAL.todos || []).filter(r => r.x.falta)); const G = grupo(L);
+    const nLojas = new Set(filtraPV(VAL.todos || []).map(r => r.v.lojaId)).size;
+    box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${G.length}</b><span>Produtos com ruptura</span></div><div class="kpi"><b style="color:var(--crit)">${L.length}</b><span>Rupturas (loja × produto)</span></div><div class="kpi"><b>${new Set(L.map(r => r.v.lojaId)).size}</b><span>Lojas com alguma ruptura</span></div></div>
+      <div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🚫 Produtos em ruptura</h3>${lista(G.map(([p, rs]) => liPV(`${h(p)} <span class="muted">›</span>`, [`<b style="color:var(--crit)">${rs.length} loja${rs.length > 1 ? 's' : ''} em ruptura</b>${nLojas ? ` · ${Math.round(rs.length / nLojas * 100)}% das lojas pesquisadas` : ''} · última ${dataBR(rs.map(r => r.d).sort().pop()).slice(0, 5)}`], 'var(--crit)', `data-prod="${h(p)}" data-modo="rup"`)), 'Nenhuma ruptura com esses filtros.')}</div>
+      <div class="muted" style="font-size:12.5px">Toque no produto para ver as lojas visitadas que estão sem ele na gôndola.</div>`;
   }
   ligaPV(box); ligaCsv();
 }
-function ligaPV(box) { box.classList.add('pv-big'); box.querySelectorAll('[data-prod]').forEach(el => el.onclick = () => abreProdutoPV(el.dataset.prod, !!el.dataset.rup)); }
+function ligaPV(box) { box.classList.add('pv-big'); box.querySelectorAll('[data-prod]').forEach(el => el.onclick = () => abreProdutoPV(el.dataset.prod, el.dataset.modo || 'val', el.dataset.fx)); }
 function ligaCsv() {
   const T = VAL.todos || [];
   $('#vl-csv').onclick = () => {
