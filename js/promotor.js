@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-11.6';
+export const VERSAO_APP = '2026-11-11.7';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -310,13 +310,23 @@ function proximoPasso() {
     if (!S.visita) return; const v = S.vis[S.visita.id]; if (!v || v.status !== 'em_loja') return;
     const falta = ['antes', 'depois'].find(t => !S.fotos.some(x => x.tipo === t));
     if (falta) { const b = document.querySelector(`[data-tirar="${falta}"]`); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-    // pesquisa (opcional): quem está digitando preços vai para o próximo item sem resposta
-    const ae = document.activeElement; const naPesq = ae && ae.dataset && ae.dataset.pq != null;
-    if (naPesq || S.vaiPesq) {
-      if (naPesq && !precoRespondido((v.precos || {})[chaveQ(S.pesquisa[+ae.dataset.pq])])) return; // ainda falta a validade deste produto
-      const de = naPesq ? +ae.dataset.pq + 1 : 0;
-      const i = S.pesquisa.findIndex((q, k) => k >= de && !precoRespondido((v.precos || {})[chaveQ(q)]) && !(document.querySelector(`[data-pq="${k}"]`) || {}).closest?.('.pp-item[hidden]'));
-      if (i >= 0) { const inp = document.querySelector(`[data-pq="${i}"]`); if (inp) { inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (naPesq) inp.focus(); } return; }
+    // pesquisa: continua do produto em que o promotor está (nunca volta para o topo da lista)
+    const P = v.precos || {}; const resp = k => precoRespondido(P[chaveQ(S.pesquisa[k])]);
+    const visivel = k => { const el = document.querySelector(`[data-pq="${k}"]`); return el && !el.closest('.pp-item[hidden]'); };
+    const centra = el => { if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); try { el.focus({ preventScroll: true }); } catch (e) {} };
+    const cur = S.pqAtual;
+    if (cur != null && S.pesquisa[cur] != null) {
+      if (!resp(cur)) { // falta algo neste mesmo produto: vai para o campo que falta
+        const x = P[chaveQ(S.pesquisa[cur])] || {};
+        const alvo = typeof x.preco !== 'number' ? `[data-pq="${cur}"]` : !x.val ? `[data-pv="${cur}"]` : `[data-pqt="${cur}"]`;
+        const el = document.querySelector(alvo); if (el && el !== document.activeElement) centra(el); return;
+      }
+      const n = S.pesquisa.length; let prox = -1;
+      for (let d = 1; d < n && prox < 0; d++) { const k = (cur + d) % n; if (!resp(k) && visivel(k)) prox = k; }
+      if (prox >= 0) { S.pqAtual = prox; centra(document.querySelector(`[data-pq="${prox}"]`)); return; }
+    } else if (S.vaiPesq) {
+      const i = S.pesquisa.findIndex((q, k) => !resp(k) && visivel(k));
+      if (i >= 0) { S.pqAtual = i; centra(document.querySelector(`[data-pq="${i}"]`)); return; }
     }
     if (!Object.keys(v.precos || {}).length && !S.vaiPesq) { S.vaiPesq = true; const pp = $('#v-pp'); if (pp) pp.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
     const o = $('#v-saida'); if (o) o.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -755,23 +765,26 @@ function renderPesquisa(v) {
     inp.onchange = inp.onblur = () => { clearTimeout(t0); salvaPreco(inp, true); };
     inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
   });
+  box.querySelectorAll('[data-pq],[data-pv],[data-pqt],[data-pf]').forEach(el => el.addEventListener('focus', () => { S.pqAtual = +(el.dataset.pq ?? el.dataset.pv ?? el.dataset.pqt ?? el.dataset.pf); }));
   box.querySelectorAll('[data-pv]').forEach(inp => inp.onchange = () => { // validade mais próxima vista na gôndola (opcional)
     if (!S.visita || !S.vis[S.visita.id]) return;
     const q = S.pesquisa[+inp.dataset.pv]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)] || {};
     const val = inp.value || null; if ((atual.val || null) === val) return;
     const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (val) novo.val = val; else delete novo.val;
     atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
-    if (val && diasAte(val) < 10) { toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}. Informe a quantidade a vender.`, 5000); setTimeout(() => { const qt = document.querySelector(`[data-pqt="${inp.dataset.pv}"]`); if (qt) { qt.closest('.pp-val').hidden = false; qt.focus(); } }, 300); }
+    S.pqAtual = +inp.dataset.pv;
+    if (val && diasAte(val) < 10) { toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}. Informe a quantidade a vender.`, 5000); setTimeout(() => { const w = document.querySelector(`[data-pqt="${inp.dataset.pv}"]`); if (w) w.closest('.pp-val').hidden = false; }, 100); }
+    proximoPasso();
   });
   box.querySelectorAll('[data-pqt]').forEach(inp => inp.onchange = () => { // quantidade com essa validade na gôndola (a vender)
     if (!S.visita || !S.vis[S.visita.id]) return;
     const q = S.pesquisa[+inp.dataset.pqt]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)] || {};
     const n = inp.value === '' ? null : Math.max(0, Math.round(+inp.value)); if ((atual.qtd ?? null) === n) return;
     const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (n != null) novo.qtd = n; else delete novo.qtd;
-    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
+    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } }); S.pqAtual = +inp.dataset.pqt; proximoPasso();
   });
   box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
-    const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
+    S.pqAtual = +b.dataset.pf; const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
     atualiza({ precos: { [q]: atual ? null : { falta: true, ts: Date.now() } } }); if (!atual) proximoPasso();
   });
 }
