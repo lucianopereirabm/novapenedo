@@ -323,3 +323,16 @@ body.so-leitura #p-geo-b, body.so-leitura #p-dgeo-b, body.so-leitura #md-local {
 .pp-val.off{opacity:.4}
 .pp-qtd input{width:82px}
 .pp-val.ok input{border-color:#2E9D5B;background:#E9F7EF}.pp-val.ok small{color:#1E7A44}
+
+/* Pesquisa e validades: letra maior para leitura no computador */
+#v-val{font-size:15.5px}
+#v-val h2{font-size:24px}#v-val h3{font-size:18px}
+.pv-big table,.pv-big .pv-tab{font-size:15px !important;width:100%}
+.pv-big th{font-size:12.5px}
+.pv-big td{padding-top:9px;padding-bottom:9px}
+#v-val .kpi b{font-size:30px}#v-val .kpi span{font-size:13.5px}
+#v-val select,#v-val input[type=search]{font-size:15px}
+#v-val .seg button{font-size:15px;padding:9px 14px}
+.pv-clic{cursor:pointer}.pv-clic:hover{background:#FFF8E1}
+td.pv-clic:hover,tr.pv-clic:hover td{text-decoration:underline;text-decoration-color:#F4BC1C}
+.modal-box.largo{max-width:1100px;width:calc(100vw - 32px)}

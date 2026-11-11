@@ -118,7 +118,7 @@ export function abreModal(html) {
     m.innerHTML = '<div class="modal-box" id="modal-box"></div>'; document.body.appendChild(m);
     m.addEventListener('click', e => { if (e.target.id === 'modal') fechaModal(); });
   }
-  $('#modal-box').innerHTML = html; m.hidden = false;
+  $('#modal-box').className = 'modal-box'; $('#modal-box').innerHTML = html; m.hidden = false;
 }
 export function fechaModal() { const m = $('#modal'); if (m) { m.hidden = true; $('#modal-box').innerHTML = ''; } }
 export function confirma(texto, botao) {
