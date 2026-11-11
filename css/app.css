@@ -310,3 +310,14 @@ body.so-leitura #p-geo-b, body.so-leitura #p-dgeo-b, body.so-leitura #md-local {
 
 .premio-box{display:grid;gap:6px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--sunk)}
 .premio-box table{width:100%}
+
+/* pesquisa: nome em cima, preço + validade + ruptura embaixo (cabe no celular) */
+.pp-item{flex-wrap:wrap}
+.pp-nome{flex-basis:100%}
+.pp-ctl{flex-wrap:wrap;width:100%}
+.pp-val{display:flex;flex-direction:column;gap:1px;font-size:11px;color:var(--muted);font-weight:600}
+.pp-val input{padding:7px 8px;font-size:14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);width:140px}
+.pp-val small{min-height:13px;font-size:11px}
+.pp-val.warn input{border-color:#E0A800;background:#FFF6D6}.pp-val.warn small{color:#9A6B00}
+.pp-val.crit input{border-color:var(--crit);background:#FDECEC}.pp-val.crit small{color:var(--crit)}
+.pp-val.off{opacity:.4}

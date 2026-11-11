@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-10.6';
+const VERSAO_GESTAO = '2026-11-11.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -19,7 +19,7 @@ const LOGO = 'img/logo.png';
 
 const S = { pesquisa: PESQ_PADRAO, termos: {}, empresa: {}, rostos: {}, promotores: [], lojas: [], acessos: {}, checklist: CHECK_PADRAO, raio: 150, regras: { base: 250, meta: 70000, prop: false },
   tab: lsGet('np.g.tab') || 'painel', pronto: { p: false, l: false } };
-const secoes = ['painel', 'montar', 'cli', 'var', 'equipe', 'config'];
+const secoes = ['painel', 'montar', 'cli', 'val', 'var', 'equipe', 'config'];
 const DOMINIO_GESTOR = 'gestor.novapenedo.app';
 
 /* ---------- login ---------- */
@@ -39,7 +39,7 @@ onAuthStateChanged(auth, async user => {
   if (!admin && !S.leitura) { $('#v-negado').hidden = false; return; }
   if (S.leitura) { // gestor só de monitoramento: só a Torre, sem alterar nada
     document.body.classList.add('so-leitura'); S.tab = 'painel';
-    document.querySelectorAll('.side-item').forEach(b => { if (!['painel', 'var'].includes(b.dataset.go)) b.hidden = true; });
+    document.querySelectorAll('.side-item').forEach(b => { if (!['painel', 'val', 'var'].includes(b.dataset.go)) b.hidden = true; });
   }
   $('#quem').innerHTML = `${S.leitura ? 'Monitoramento' : 'Gestão'}<b>${h(S.leitura ? (user.email || '').replace('@' + DOMINIO_GESTOR, '') : (user.email || ''))}</b>`;
   $('#shell').hidden = false; $('#versao-g').textContent = 'Versão ' + VERSAO_GESTAO; iniciar();
@@ -83,6 +83,7 @@ function render() {
   if (S.tab === 'painel') renderPainel();
   if (S.tab === 'montar') renderMontar();
   if (S.tab === 'cli') renderClientes();
+  if (S.tab === 'val') renderVal();
   if (S.tab === 'var') renderVar();
   if (S.tab === 'equipe') renderEquipe();
   if (S.tab === 'config') renderConfig();
@@ -398,6 +399,52 @@ function renderMesPromotor(r, nomeMes) {
     <div class="muted" style="font-size:12px">Jornada = do check-in da primeira loja ao check-out da última. * ficou sem check-out na última loja: contado até a última entrada. Clique num dia para abrir a Torre naquele dia.</div></div>`;
   $('#pm-volta').onclick = () => { P.selMes = ''; renderPainel(); };
   box.querySelectorAll('[data-dd]').forEach(tr => tr.onclick = () => { P.modo = 'dia'; lsSet('np.p.modo', 'dia'); P.data = tr.dataset.dd; $('#p-data').value = P.data; P.sel = r.pid; box.dataset.modo = ''; assinaPainel(); renderPainel(); window.scrollTo(0, 0); });
+}
+
+/* ---------- Validades: produtos perto do vencimento vistos pelos promotores ---------- */
+const VAL = { dias: 21, cache: null, em: 0, carregando: false };
+const diasAteV = d => Math.round((new Date(d + 'T12:00:00') - new Date(dataHoje() + 'T12:00:00')) / 864e5);
+const dataHoje = () => ymd(new Date());
+async function carregaValidades(forca) {
+  if (VAL.carregando || (!forca && VAL.cache && Date.now() - VAL.em < 120000)) return;
+  VAL.carregando = true;
+  try {
+    const hoje = new Date(); const datas = [];
+    for (let i = VAL.dias - 1; i >= 0; i--) { const d = new Date(hoje); d.setDate(d.getDate() - i); datas.push(ymd(d)); }
+    const snaps = await Promise.all(datas.map(d => getDocs(collection(db, 'dias', d, 'visitas')).then(s => [d, s]).catch(() => [d, null])));
+    const ult = new Map(); // loja + produto → última informação (a mais recente vale)
+    const ck = q => q.replace(/[.~*/\[\]]/g, '_'); const nomes = new Map(S.pesquisa.map(q => [ck(q), q]));
+    snaps.forEach(([d, s]) => { if (!s) return; s.docs.map(x => x.data()).sort((a, b) => (a.checkin || 0) - (b.checkin || 0)).forEach(v => {
+      Object.entries(v.precos || {}).forEach(([k, x]) => { if (!x) return; ult.set(v.lojaId + '|' + k, { d, k, x, v, produto: nomes.get(k) || k }); });
+    }); });
+    VAL.cache = [...ult.values()].filter(r => r.x.val && !r.x.falta).map(r => Object.assign(r, { faltam: diasAteV(r.x.val) })).filter(r => r.faltam < 10).sort((a, b) => a.faltam - b.faltam || a.produto.localeCompare(b.produto));
+    VAL.em = Date.now();
+  } catch (e) { toast(erroMsg(e)); } finally { VAL.carregando = false; }
+}
+async function renderVal(forca) {
+  const c = $('#v-val');
+  c.innerHTML = `<div class="spread" style="flex-wrap:wrap"><div><h2>Validades</h2><div class="muted" style="font-size:13px">Produtos da pesquisa com validade perto do fim, pela última visita de cada loja nos últimos ${VAL.dias} dias.</div></div>
+    <div class="row"><button class="btn sm" id="vl-csv">Baixar planilha</button><button class="btn sm" id="vl-at">Atualizar</button></div></div><div id="vl-c" class="muted">Carregando…</div>`;
+  $('#vl-at').onclick = () => renderVal(true);
+  await carregaValidades(forca);
+  const box = $('#vl-c'); if (!box || S.tab !== 'val') return;
+  const L = VAL.cache || []; const verm = L.filter(r => r.faltam < 7), amar = L.filter(r => r.faltam >= 7);
+  const loja = r => { const l = S.lojas.find(y => y.id === r.v.lojaId) || {}; return { cod: r.v.codigo || l.codigo || '', nome: r.v.lojaNome || l.nome || '', cid: l.municipio || r.v.cidade || '' }; };
+  const fx = r => r.faltam < 0 ? `vencido há ${-r.faltam} dia${r.faltam < -1 ? 's' : ''}` : r.faltam === 0 ? 'vence hoje' : `faltam ${r.faltam} dia${r.faltam > 1 ? 's' : ''}`;
+  const tabela = (lst, cor, fundo) => lst.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Validade</th><th>Produto</th><th>Loja</th><th>Promotor</th><th>Visto em</th></tr></thead><tbody>${lst.map(r => { const lj = loja(r); return `<tr style="background:${fundo}">
+      <td style="white-space:nowrap"><b style="color:${cor}">${r.x.val.split('-').reverse().join('/')}</b><div style="font-size:12px;color:${cor}">${fx(r)}</div></td>
+      <td>${h(r.produto)}</td><td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:12px">${h(lj.cid)}</div></td><td>${h(promNome(r.v.promotorId))}</td>
+      <td style="white-space:nowrap">${r.d.split('-').reverse().slice(0, 2).join('/')}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nenhum produto nesta faixa.</div>';
+  box.className = 'stack';
+  box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${verm.length}</b><span>Menos de 7 dias (vermelho)</span></div><div class="kpi"><b style="color:#9A6B00">${amar.length}</b><span>De 7 a 9 dias (amarelo)</span></div></div>
+    <div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🔴 Menos de 7 dias · data apertada</h3>${tabela(verm, 'var(--crit)', '#FDECEC')}</div>
+    <div class="card stack" style="border-left:5px solid #E0A800"><h3 style="color:#9A6B00">🟡 Menos de 10 dias</h3>${tabela(amar, '#9A6B00', '#FFF6D6')}</div>
+    <div class="muted" style="font-size:12px">O promotor informa a validade mais próxima de cada produto na pesquisa de preço (opcional). Quando ele volta na loja e informa outra data, vale a mais recente.</div>`;
+  $('#vl-csv').onclick = () => {
+    const linhas = [['Faixa', 'Validade', 'Dias', 'Produto', 'Cód. loja', 'Loja', 'Cidade', 'Promotor', 'Visto em']].concat(L.map(r => { const lj = loja(r); return [r.faltam < 7 ? 'VERMELHO' : 'AMARELO', r.x.val.split('-').reverse().join('/'), r.faltam, r.produto, lj.cod, lj.nome, lj.cid, promNome(r.v.promotorId), r.d.split('-').reverse().join('/')]; }));
+    const txt = '\ufeff' + linhas.map(l => l.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = `Validades ${dataHoje()}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
 }
 function csvMes(RS, nomeMes) {
   const L = [['Promotor', 'Data', 'Dia', 'Início', 'Fim', 'Trabalhado (h)', 'Em loja (h)', 'Deslocamento (h)', 'Previsto (h)', 'Saldo (h)', 'Visitas feitas', 'Programadas', 'Não visitadas', 'Sem registro', 'Fora da rota', 'Alertas', 'Observação']];
@@ -746,7 +793,13 @@ async function detalheVisita(date, id, vInfo) {
      ${v.rostoDist !== undefined || S.rostos[v.promotorId] ? `<div class="row" style="gap:10px;align-items:center;flex-wrap:nowrap">${avatar(v.promotorId, 56)}<div class="note ${v.rostoOk === false ? 'crit' : v.rostoOk ? 'ok' : ''}" style="flex:1">${v.rostoOk === false ? `<b>Rosto da selfie não confere com o cadastro</b>${v.rostoDist != null ? ` (diferença ${n2(v.rostoDist)}; até ${n2(LIMITE)} é a mesma pessoa)` : ' (rosto não encontrado na selfie)'}. Compare as fotos.` : v.rostoOk ? `Rosto da selfie confere com o cadastro (diferença ${n2(v.rostoDist)}).` : 'Selfie sem conferência automática de rosto (promotor sem foto no cadastro na hora do check-in).'}</div></div>` : ''}
      ${v.gpsIn && loja ? `<div class="row">${S.leitura ? '' : '<button class="btn sm" id="md-local">Usar este ponto como local da loja</button>'}<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.gpsIn.lat},${v.gpsIn.lng}">Ver no Google Maps</a></div>` : ''}
      ${Object.keys(resp).some(k => resp[k]) ? `<div><div class="label">Checklist</div>${Object.keys(resp).filter(k => resp[k]).map(k => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(k)}</span><b>${resp[k] === 'sim' ? 'Sim' : 'Não'}</b></div>`).join('') || '<div class="muted">Sem respostas.</div>'}</div>` : ''}
-     <div><div class="label">Pesquisa de preço</div>${S.pesquisa.map(q => { const x = (v.precos || {})[q.replace(/[.~*/\[\]]/g, '_')]; return `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line)"><span>${h(q)}</span><b class="num">${!x ? '<span class="muted">não informado</span>' : x.falta ? '<span style="color:var(--crit)">não tem na loja</span>' : brl(x.preco)}</b></div>`; }).join('')}</div>
+     ${(() => { // pesquisa de preço: mostra o que foi respondido (itens atuais e de listas anteriores)
+       const ck = q => q.replace(/[.~*/\[\]]/g, '_'); const P = v.precos || {}; const atuais = new Map(S.pesquisa.map(q => [ck(q), q]));
+       const resp = Object.keys(P).filter(k => P[k]).map(k => [atuais.get(k) || k, P[k]]);
+       const rup = resp.filter(([, x]) => x.falta).length, npr = resp.filter(([, x]) => !x.falta && typeof x.preco === 'number').length; const nInf = S.pesquisa.filter(q => !P[ck(q)]).length;
+       const vtag = x => { if (!x.val || x.falta) return ''; const n = Math.round((new Date(x.val + 'T12:00:00') - new Date(date + 'T12:00:00')) / 864e5); const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : 'var(--muted)'; return `<div style="font-size:12px;font-weight:600;color:${cor}">validade ${x.val.split('-').reverse().join('/')} (${n < 0 ? 'vencido' : n + ' dia' + (n === 1 ? '' : 's')})</div>`; };
+       return `<div><div class="label">Pesquisa de preço · ${npr} preço(s) · ${rup} ruptura(s)${nInf ? ` · ${nInf} não informado(s)` : ''}</div>${resp.length ? resp.map(([q, x]) => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px"><span style="min-width:0">${h(q)}</span><span style="text-align:right"><b class="num" style="white-space:nowrap">${x.falta ? '<span style="color:var(--crit)">ruptura</span>' : typeof x.preco === 'number' ? brl(x.preco) : '<span class="muted">sem preço</span>'}</b>${vtag(x)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">Nenhum item lançado nesta visita.</div>'}</div>`;
+     })()}
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}
      <div><div class="label">Fotos</div><div id="md-fotos" class="stack muted">Carregando fotos…</div></div>`}`);
   $('#md-x').onclick = fechaModal;

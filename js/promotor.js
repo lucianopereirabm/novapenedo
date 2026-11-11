@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-10.4';
+export const VERSAO_APP = '2026-11-11.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -302,8 +302,14 @@ function proximoPasso() {
     if (!S.visita) return; const v = S.vis[S.visita.id]; if (!v || v.status !== 'em_loja') return;
     const falta = ['antes', 'depois'].find(t => !S.fotos.some(x => x.tipo === t));
     if (falta) { const b = document.querySelector(`[data-tirar="${falta}"]`); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-    const i = S.pesquisa.findIndex(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
-    if (i >= 0) { const inp = document.querySelector(`[data-pq="${i}"]`); if (inp) { inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (document.activeElement && document.activeElement.dataset && document.activeElement.dataset.pq != null) inp.focus(); } return; }
+    // pesquisa (opcional): quem está digitando preços vai para o próximo item sem resposta
+    const ae = document.activeElement; const naPesq = ae && ae.dataset && ae.dataset.pq != null;
+    if (naPesq || S.vaiPesq) {
+      const de = naPesq ? +ae.dataset.pq + 1 : 0;
+      const i = S.pesquisa.findIndex((q, k) => k >= de && !precoRespondido((v.precos || {})[chaveQ(q)]) && !(document.querySelector(`[data-pq="${k}"]`) || {}).closest?.('.pp-item[hidden]'));
+      if (i >= 0) { const inp = document.querySelector(`[data-pq="${i}"]`); if (inp) { inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (naPesq) inp.focus(); } return; }
+    }
+    if (!Object.keys(v.precos || {}).length && !S.vaiPesq) { S.vaiPesq = true; const pp = $('#v-pp'); if (pp) pp.closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
     const o = $('#v-saida'); if (o) o.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, 250);
 }
@@ -489,7 +495,7 @@ function abreVisita(lojaId, fora, idForcado, n) {
   const ordem = lojasHoje().findIndex(l => l.id === lojaId);
   const id = idForcado || vid(lojaId); const nv = n || (S.vis[id] && S.vis[id].visitaN) || 1;
   S.visita = { loja, id, n: nv, fora: fora || ordem < 0 || nv > 1, ordem };
-  S.fotos = []; $('#v-obs').value = ''; $('#v-obs-st').textContent = '';
+  S.fotos = []; S.vaiPesq = false; $('#v-obs').value = ''; $('#v-obs-st').textContent = '';
   if (unsubFotos) unsubFotos();
   unsubFotos = onSnapshot(doc(db, 'dias', S.hoje, 'fotos', S.visita.id), s => { S.fotos = s.exists() ? (s.data().imgs || []) : []; renderFotos(); }, () => {});
   $('#sheet').hidden = false; $('#sheet').scrollTop = 0; renderVisita();
@@ -603,7 +609,7 @@ async function checkout() {
   document.querySelectorAll('#v-pp [data-pq]').forEach(inp => salvaPreco(inp, false)); // grava o que foi digitado e ainda não foi salvo
   const v2 = S.vis[V.id] || v;
   const semPreco = S.pesquisa.filter(q => !precoRespondido((v2.precos || {})[chaveQ(q)]));
-  if (semPreco.length) { toast('Preencha a pesquisa de preço: ' + semPreco.join(', ') + '.', 6000); $('#v-pp').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+  // pesquisa de preço é opcional por enquanto: não trava o check-out
   if (bloqueiaAlmoco()) return;
   const b = $('#b-out'); const rot = 'Fazer check-out';
   if (b) { b.disabled = true; b.firstChild.textContent = 'Pegando o GPS…'; }
@@ -648,7 +654,7 @@ function naoVisitou() {
 function atualiza(campos) {
   if (!campos.checkout && bloqueiaAlmoco()) return Promise.resolve();
   const V = S.visita; if (!V) return Promise.resolve(); const v = S.vis[V.id];
-  if (v) { S.vis[V.id] = Object.assign({}, v, campos, campos.checklist ? { checklist: Object.assign({}, v.checklist, campos.checklist) } : {}, campos.precos ? { precos: Object.assign({}, v.precos, campos.precos) } : {}); renderVisita(); }
+  if (v) { S.vis[V.id] = Object.assign({}, v, campos, campos.checklist ? { checklist: Object.assign({}, v.checklist, campos.checklist) } : {}, campos.precos ? { precos: Object.assign({}, v.precos, Object.fromEntries(Object.entries(campos.precos).map(([k, x]) => [chaveQ(k), x]))) } : {}); renderVisita(); }
   const upd = Object.assign({}, campos, { atualizado: Date.now(), recebido: serverTimestamp() });
   if (campos.precos) { delete upd.precos; Object.entries(campos.precos).forEach(([k, val]) => upd['precos.' + chaveQ(k)] = val); }
   if (campos.checklist) { delete upd.checklist; Object.entries(campos.checklist).forEach(([k, val]) => upd['checklist.' + k.replace(/[.~*/\[\]]/g, '_')] = val); }
@@ -687,12 +693,16 @@ function salvaPreco(inp, avancar) {
   if (!S.visita || !S.vis[S.visita.id]) return;
   const q = S.pesquisa[+inp.dataset.pq]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)];
   const t = inp.value.trim(); const n = t ? +t.replace(/\./g, '').replace(',', '.') : null;
-  if (n == null) { if (atual && !atual.falta) atualiza({ precos: { [q]: null } }); return; }
+  if (n == null) { if (atual && !atual.falta && typeof atual.preco === 'number') atualiza({ precos: { [q]: atual.val ? { val: atual.val, ts: Date.now() } : null } }); return; }
   if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
   const val = Math.round(n * 100) / 100;
-  if (!(atual && atual.preco === val)) atualiza({ precos: { [q]: { preco: val, ts: Date.now() } } });
+  if (!(atual && atual.preco === val)) atualiza({ precos: { [q]: Object.assign({}, atual && !atual.falta ? atual : {}, { preco: val, ts: Date.now() }) } });
   if (avancar) proximoPasso();
 }
+// validade: menos de 10 dias = amarelo; menos de 7 = vermelho
+const diasAte = d => Math.round((new Date(d + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5);
+const corVal = d => { if (!d) return ''; const n = diasAte(d); return n < 7 ? 'crit' : n < 10 ? 'warn' : ''; };
+const txtVal = d => { if (!d) return ''; const n = diasAte(d); return n < 0 ? `vencido há ${-n} dia${n < -1 ? 's' : ''}` : n === 0 ? 'vence hoje' : `vence em ${n} dia${n > 1 ? 's' : ''}`; };
 function renderPesquisa(v) {
   const box = $('#v-pp');
   { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)])).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
@@ -702,14 +712,20 @@ function renderPesquisa(v) {
   if (box.dataset.k === chave) {
     S.pesquisa.forEach((q, i) => { const x = resp[chaveQ(q)] || {}; const inp = box.querySelector(`[data-pq="${i}"]`), bt = box.querySelector(`[data-pf="${i}"]`); if (!inp) return;
       if (document.activeElement !== inp) { const novo = typeof x.preco === 'number' ? brl2(x.preco) : (x.falta ? '' : inp.value); if (inp.value !== novo) inp.value = novo; }
-      inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode; });
+      inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode;
+      const vd = box.querySelector(`[data-pv="${i}"]`); if (vd) { if (document.activeElement !== vd) vd.value = x.val || ''; vd.disabled = !pode || !!x.falta; const w = vd.closest('.pp-val'); w.className = 'pp-val ' + corVal(x.val) + (x.falta ? ' off' : ''); w.querySelector('small').textContent = txtVal(x.val); } });
     return;
   }
   box.dataset.k = chave;
   box.innerHTML = S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
       <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
-      <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Não tem</button></div></div>`; }).join('');
+      <label class="pp-val ${corVal(x.val)}${x.falta ? ' off' : ''}"><span>Validade</span><input type="date" data-pv="${i}" value="${h(x.val || '')}" ${!pode || x.falta ? 'disabled' : ''}><small>${txtVal(x.val)}</small></label>
+      <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Ruptura</button></div></div>`; }).join('');
+  if (S.pesquisa.length > 8) { // lista grande: campo para achar o produto
+    box.insertAdjacentHTML('afterbegin', `<input type="search" id="pp-busca" placeholder="Buscar produto (nome ou código)" autocomplete="off" style="margin-bottom:6px">`);
+    $('#pp-busca').oninput = e => { const t = semAcento(e.target.value.trim()); box.querySelectorAll('.pp-item').forEach(it => { it.hidden = !!t && !semAcento(it.querySelector('.pp-nome').textContent).includes(t); }); };
+  }
   const ok = S.pesquisa.filter(q => precoRespondido(resp[chaveQ(q)])).length;
   $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`;
   box.querySelectorAll('[data-pq]').forEach(inp => {
@@ -719,6 +735,14 @@ function renderPesquisa(v) {
     inp.oninput = () => { const d = inp.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 5); inp.value = d ? brl2(+d / 100) : ''; clearTimeout(t0); t0 = setTimeout(() => salvaPreco(inp, false), 900); };
     inp.onchange = inp.onblur = () => { clearTimeout(t0); salvaPreco(inp, true); };
     inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } };
+  });
+  box.querySelectorAll('[data-pv]').forEach(inp => inp.onchange = () => { // validade mais próxima vista na gôndola (opcional)
+    if (!S.visita || !S.vis[S.visita.id]) return;
+    const q = S.pesquisa[+inp.dataset.pv]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)] || {};
+    const val = inp.value || null; if ((atual.val || null) === val) return;
+    const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (val) novo.val = val; else delete novo.val;
+    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val) ? novo : null } });
+    if (val && diasAte(val) < 10) toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}.`, 4000);
   });
   box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
     const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
