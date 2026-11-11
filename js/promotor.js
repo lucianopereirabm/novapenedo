@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-11.4';
+export const VERSAO_APP = '2026-11-11.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -313,6 +313,7 @@ function proximoPasso() {
     // pesquisa (opcional): quem está digitando preços vai para o próximo item sem resposta
     const ae = document.activeElement; const naPesq = ae && ae.dataset && ae.dataset.pq != null;
     if (naPesq || S.vaiPesq) {
+      if (naPesq && !precoRespondido((v.precos || {})[chaveQ(S.pesquisa[+ae.dataset.pq])])) return; // ainda falta a validade deste produto
       const de = naPesq ? +ae.dataset.pq + 1 : 0;
       const i = S.pesquisa.findIndex((q, k) => k >= de && !precoRespondido((v.precos || {})[chaveQ(q)]) && !(document.querySelector(`[data-pq="${k}"]`) || {}).closest?.('.pp-item[hidden]'));
       if (i >= 0) { const inp = document.querySelector(`[data-pq="${i}"]`); if (inp) { inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (naPesq) inp.focus(); } return; }
@@ -617,7 +618,12 @@ async function checkout() {
   document.querySelectorAll('#v-pp [data-pq]').forEach(inp => salvaPreco(inp, false)); // grava o que foi digitado e ainda não foi salvo
   const v2 = S.vis[V.id] || v;
   const semPreco = S.pesquisa.filter(q => !precoRespondido((v2.precos || {})[chaveQ(q)]));
-  // pesquisa de preço é opcional por enquanto: não trava o check-out
+  if (semPreco.length) { // pesquisa obrigatória: cada produto com Ruptura, ou preço + validade
+    const i = S.pesquisa.indexOf(semPreco[0]); const inp = document.querySelector(`[data-pq="${i}"]`);
+    const bx = $('#pp-busca'); if (bx && bx.value) { bx.value = ''; bx.oninput({ target: bx }); }
+    toast(`Falta completar a pesquisa (${semPreco.length} produto${semPreco.length > 1 ? 's' : ''}): marque Ruptura ou informe o preço e a validade (e a quantidade, se vencer em menos de 10 dias). Primeiro: ${semPreco[0].replace(/^\d+ - /, '')}.`, 7000);
+    if (inp) inp.scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
+  }
   if (bloqueiaAlmoco()) return;
   const b = $('#b-out'); const rot = 'Fazer check-out';
   if (b) { b.disabled = true; b.firstChild.textContent = 'Pegando o GPS…'; }
@@ -694,7 +700,10 @@ function salvaFotos(lista) {
 }
 /* ---------- pesquisa de preço ---------- */
 const chaveQ = q => q.replace(/[.~*/\[\]]/g, '_');
-const precoRespondido = x => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0));
+// item completo: Ruptura, ou preço de ponta + validade (a quantidade é opcional)
+// validade com menos de 10 dias (alerta) exige também a quantidade a vender
+const precisaQtd = x => !!x && !x.falta && !!x.val && diasAte(x.val) < 10;
+const precoRespondido = x => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0 && !!x.val && (!precisaQtd(x) || (x.qtd != null && x.qtd >= 0))));
 const brl2 = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Lê o campo de preço e grava (só se mudou). avancar = leva para o próximo item.
 function salvaPreco(inp, avancar) {
@@ -721,7 +730,7 @@ function renderPesquisa(v) {
     S.pesquisa.forEach((q, i) => { const x = resp[chaveQ(q)] || {}; const inp = box.querySelector(`[data-pq="${i}"]`), bt = box.querySelector(`[data-pf="${i}"]`); if (!inp) return;
       if (document.activeElement !== inp) { const novo = typeof x.preco === 'number' ? brl2(x.preco) : (x.falta ? '' : inp.value); if (inp.value !== novo) inp.value = novo; }
       inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode;
-      const qt = box.querySelector(`[data-pqt="${i}"]`); if (qt) { if (document.activeElement !== qt) qt.value = x.qtd != null ? x.qtd : ''; qt.disabled = !pode || !!x.falta; qt.closest('.pp-val').classList.toggle('off', !!x.falta); }
+      const qt = box.querySelector(`[data-pqt="${i}"]`); if (qt) { if (document.activeElement !== qt) qt.value = x.qtd != null ? x.qtd : ''; qt.disabled = !pode || !!x.falta; qt.closest('.pp-val').classList.toggle('off', !!x.falta); qt.closest('.pp-val').hidden = !precisaQtd(x); }
       const vd = box.querySelector(`[data-pv="${i}"]`); if (vd) { if (document.activeElement !== vd) vd.value = x.val || ''; vd.disabled = !pode || !!x.falta; const w = vd.closest('.pp-val'); w.className = 'pp-val ' + corVal(x.val) + (x.falta ? ' off' : ''); w.querySelector('small').textContent = txtVal(x.val); } });
     return;
   }
@@ -730,7 +739,7 @@ function renderPesquisa(v) {
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
       <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
       <label class="pp-val ${corVal(x.val)}${x.falta ? ' off' : ''}"><span>Validade</span><input type="date" data-pv="${i}" value="${h(x.val || '')}" ${!pode || x.falta ? 'disabled' : ''}><small>${txtVal(x.val)}</small></label>
-      <label class="pp-val pp-qtd${x.falta ? ' off' : ''}"><span>Qtd a vender</span><input type="number" inputmode="numeric" min="0" step="1" data-pqt="${i}" value="${x.qtd != null ? x.qtd : ''}" placeholder="un" ${!pode || x.falta ? 'disabled' : ''}><small></small></label>
+      <label class="pp-val pp-qtd${x.falta ? ' off' : ''}" ${precisaQtd(x) ? '' : 'hidden'}><span>Qtd a vender *</span><input type="number" inputmode="numeric" min="0" step="1" data-pqt="${i}" value="${x.qtd != null ? x.qtd : ''}" placeholder="un" ${!pode || x.falta ? 'disabled' : ''}><small></small></label>
       <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Ruptura</button></div></div>`; }).join('');
   if (S.pesquisa.length > 8) { // lista grande: campo para achar o produto
     box.insertAdjacentHTML('afterbegin', `<input type="search" id="pp-busca" placeholder="Buscar produto (nome ou código)" autocomplete="off" style="margin-bottom:6px">`);
@@ -752,7 +761,7 @@ function renderPesquisa(v) {
     const val = inp.value || null; if ((atual.val || null) === val) return;
     const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (val) novo.val = val; else delete novo.val;
     atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
-    if (val && diasAte(val) < 10) toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}.`, 4000);
+    if (val && diasAte(val) < 10) { toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}. Informe a quantidade a vender.`, 5000); setTimeout(() => { const qt = document.querySelector(`[data-pqt="${inp.dataset.pv}"]`); if (qt) { qt.closest('.pp-val').hidden = false; qt.focus(); } }, 300); }
   });
   box.querySelectorAll('[data-pqt]').forEach(inp => inp.onchange = () => { // quantidade com essa validade na gôndola (a vender)
     if (!S.visita || !S.vis[S.visita.id]) return;
