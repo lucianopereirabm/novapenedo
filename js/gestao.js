@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.10';
+const VERSAO_GESTAO = '2026-11-11.11';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -239,6 +239,8 @@ function renderPainel() {
   if (!VAL.todos) carregaValidades().then(() => { const k = $('#k-pv'); if (k) k.innerHTML = kpiValidade(); });
   $('#p-kpis').querySelectorAll('[data-k]').forEach(b => b.onclick = () => b.dataset.k === 'pv' ? irPara('val') : kpiLista(b.dataset.k, dias));
   const box = $('#p-corpo');
+  // dentro de um promotor os quadros da equipe somem (os dados dele já aparecem no cabeçalho)
+  $('#p-kpis').hidden = !!(P.sel && dias.some(d => d.pid === P.sel));
   if (P.sel && dias.some(d => d.pid === P.sel)) return renderDetalhe(dias.find(d => d.pid === P.sel));
   P.sel = '';
   if (!dias.length) { box.dataset.modo = ''; tiraMapa(); box.innerHTML = `<div class="empty"><b>Nenhuma rota neste dia</b>As lojas aparecem conforme os dias marcados em Montar rotas.</div>`; return; }
@@ -374,7 +376,7 @@ async function renderMes() {
   const RS = resumoMes(D, P.mes);
   if (!diasDoMes(P.mes).length) { $('#p-kpis').innerHTML = ''; box.innerHTML = `<div class="empty"><b>Sem dias controlados neste mês</b>O controle pelo app começou em ${dataBR(inicioControle())}.</div>`; return; }
   const T = RS.reduce((t, r) => ({ prog: t.prog + r.prog, feitas: t.feitas + r.feitas, nao: t.nao + r.nao, sem: t.sem + r.semVisita, saldo: t.saldo + r.saldo, faltas: t.faltas + r.faltas, al: t.al + r.alertas }), { prog: 0, feitas: 0, nao: 0, sem: 0, saldo: 0, faltas: 0, al: 0 });
-  $('#p-kpis').innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas (${T.prog ? Math.round(T.feitas / T.prog * 100) : 0}%)</span></div><div class="kpi"><b style="color:var(--crit)">${T.sem + T.nao}</b><span>Lojas sem visita (${T.nao} com motivo)</span></div><div class="kpi"><b style="color:${T.faltas ? 'var(--crit)' : 'inherit'}">${T.faltas}</b><span>Dias com rota sem jornada</span></div><div class="kpi"><b style="color:${T.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(T.saldo)}</b><span>Banco de horas da equipe</span></div></div>`;
+  $("#p-kpis").hidden = false; $("#p-kpis").innerHTML = `<div class="kpis num"><div class="kpi"><b>${T.feitas}<small> / ${T.prog}</small></b><span>Visitas realizadas (${T.prog ? Math.round(T.feitas / T.prog * 100) : 0}%)</span></div><div class="kpi"><b style="color:var(--crit)">${T.sem + T.nao}</b><span>Lojas sem visita (${T.nao} com motivo)</span></div><div class="kpi"><b style="color:${T.faltas ? 'var(--crit)' : 'inherit'}">${T.faltas}</b><span>Dias com rota sem jornada</span></div><div class="kpi"><b style="color:${T.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(T.saldo)}</b><span>Banco de horas da equipe</span></div></div>`;
   if (P.selMes && RS.some(r => r.pid === P.selMes)) return renderMesPromotor(RS.find(r => r.pid === P.selMes), nomeMes);
   box.innerHTML = `<div class="card" style="padding:0"><div class="table-wrap"><table class="num mes"><thead><tr><th>Promotor</th><th class="r">Dias trab.</th><th class="r">Faltas</th><th class="r">Horas trab.</th><th class="r">Em loja</th><th class="r">Deslocamento</th><th class="r">Previstas</th><th class="r">Banco de horas</th><th class="r">Visitas</th><th class="r">Não visitadas</th><th class="r">Sem registro</th><th class="r">Fora da rota</th><th class="r">Alertas</th></tr></thead><tbody>
     ${RS.map(r => `<tr class="click" data-pm="${h(r.pid)}"><td><div class="row" style="gap:8px;flex-wrap:nowrap">${avatar(r.pid, 30)}<b>${h(nomeCurto(r.pid))}</b></div></td><td class="r">${r.diasTrab}</td><td class="r" style="color:${r.faltas ? 'var(--crit)' : 'inherit'}">${r.faltas || '—'}</td><td class="r"><b>${hmin(r.trab)}</b></td><td class="r">${partes(r.loja, r.trab, r.andamento && r.andamento.loja)}</td><td class="r">${partes(r.desl, r.trab, r.andamento && r.andamento.desl, true)}</td><td class="r">${hmin(r.prev)}</td>
