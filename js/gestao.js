@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.9';
+const VERSAO_GESTAO = '2026-11-11.10';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -467,6 +467,8 @@ const alfaLoja = (a, b) => lojaDe(a).nome.localeCompare(lojaDe(b).nome, 'pt-BR')
 const corFaixa = r => r.x.falta ? 'var(--crit)' : r.faltam == null ? 'var(--line)' : r.faltam < 7 ? 'var(--crit)' : r.faltam < 10 ? '#E0A800' : '#2E9D5B';
 const valTxt = r => { if (!r.x.val || r.x.falta) return ''; const n = r.faltam; const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; return `<b style="color:${cor}">val. ${dataBR(r.x.val).slice(0, 5)} · ${faltamTxt(n)}</b>`; };
 const precoTxt = r => r.x.falta ? '<b style="color:var(--crit)">RUPTURA</b>' : typeof r.x.preco === 'number' ? `<b>${brl(r.x.preco)}</b>` : '';
+// produto que abre (acordeão) e mostra as lojas logo abaixo, sem tela por cima
+const produtoPV = (titulo, linhas, cor, produto, modo, faixa) => `<details class="pv-li pv-prodbox" style="border-left-color:${cor || 'var(--line)'}" data-p="${h(produto)}" data-modo="${modo}" data-fx="${faixa || ''}"><summary><div class="pv-t">${titulo}</div>${linhas.filter(Boolean).map(l => `<div class="pv-s">${l}</div>`).join('')}</summary><div class="pv-corpo"></div></details>`;
 const liPV = (titulo, linhas, cor, attrs) => `<div class="pv-li${attrs ? ' pv-clic' : ''}" style="border-left-color:${cor || 'var(--line)'}" ${attrs || ''}><div class="pv-t">${titulo}</div>${linhas.filter(Boolean).map(l => `<div class="pv-s">${l}</div>`).join('')}</div>`;
 let rzPV = null; window.addEventListener('resize', () => { clearTimeout(rzPV); rzPV = setTimeout(() => { if (S.tab === 'val' && $('#vl-c')) desenhaPV(); }, 300); });
 // tabela das lojas de um produto (usada na busca e ao clicar num produto em qualquer módulo)
@@ -478,14 +480,23 @@ function tabelaLojasProduto(rs) {
       <td style="white-space:nowrap;background:${fundo};color:${cor}">${r.x.val && !r.x.falta ? `<b>${dataBR(r.x.val)}</b><div style="font-size:.85em">${faltamTxt(n)}</div>` : '—'}</td><td class="r">${r.x.qtd != null && !r.x.falta ? r.x.qtd + ' un' : '—'}</td><td>${h(promNome(r.v.promotorId))}</td><td style="white-space:nowrap">${dataBR(r.d)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
 }
 // clique no produto: lojas daquele produto, só com o que interessa em cada módulo
-function linhasModo(r, modo) {
-  const lj = lojaDe(r); const tit = `${h(lj.cod)} · ${h(lj.nome)} <span class="muted" style="font-weight:500">· ${h(lj.cid)}</span>`; const quem = `${h(promNome(r.v.promotorId))} · ${dataBR(r.d)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}`;
-  if (modo === 'val') { const n = r.faltam; const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44';
-    return liPV(tit, [`<span class="pv-dest" style="color:${cor}">${dataBR(r.x.val)} · ${faltamTxt(n)}</span>${r.x.qtd != null ? ` <span class="pv-dest2">${r.x.qtd} un a vender</span>` : ''}`, quem], corFaixa(r)); }
-  if (modo === 'pq') return liPV(tit, [`<span class="pv-dest" style="color:${r._cor || 'var(--ink)'}">${brl(r.x.preco)}</span>${r._tag ? ` <span class="pv-tag" style="background:${r._cor}">${r._tag}</span>` : ''}`, quem], r._cor || 'var(--line)');
-  return liPV(tit, [quem], 'var(--crit)');
+function dadosLoja(r) { // endereço e dados do cliente (abre ao tocar no nome)
+  const l = S.lojas.find(y => y.id === r.v.lojaId) || {}; const end = [l.endereco, l.numero].filter(Boolean).join(', ');
+  const linha = [end, l.bairro, [l.municipio, l.uf].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+  const q = encodeURIComponent([end, l.bairro, l.municipio, l.uf].filter(Boolean).join(', '));
+  return `<div class="pv-end">${l.razao ? `<div><b>${h(l.razao)}</b></div>` : ''}<div>📍 ${h(linha || 'Endereço não cadastrado')}${l.cep ? ' · CEP ' + h(l.cep) : ''}</div>${l.telefone ? `<div>📞 ${h(l.telefone)}</div>` : ''}<div>Pesquisa feita em ${dataBR(r.d)}${r.v.checkin ? ' às ' + hm(r.v.checkin) : ''} por ${h(promNome(r.v.promotorId))}</div>${q ? `<a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Abrir no mapa ›</a>` : ''}</div>`;
 }
-function abreProdutoPV(produto, modo, faixa) {
+function linhasModo(r, modo) {
+  const lj = lojaDe(r); const tit = `${h(lj.cod)} · ${h(lj.nome)} <span class="muted" style="font-weight:500">· ${h(lj.cid)}</span>`; const quando = `pesquisa ${dataBR(r.d).slice(0, 5)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}`;
+  let info, cor;
+  if (modo === 'val') { const n = r.faltam; const c = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; cor = corFaixa(r);
+    info = `<span class="pv-dest" style="color:${c}">val. ${dataBR(r.x.val).slice(0, 5)} · ${faltamTxt(n)}</span>${r.x.qtd != null ? ` <span class="pv-dest2">${r.x.qtd} un a vender</span>` : ''}`; }
+  else if (modo === 'pq') { cor = r._cor || 'var(--line)'; info = `<span class="pv-dest" style="color:${r._cor || 'var(--ink)'}">${brl(r.x.preco)}</span>${r._tag ? ` <span class="pv-tag" style="background:${r._cor}">${r._tag}</span>` : ''}`; }
+  else { cor = 'var(--crit)'; info = '<span class="pv-dest" style="color:var(--crit)">ruptura</span>'; }
+  return `<details class="pv-loja" style="border-left-color:${cor}"><summary><div class="pv-t">${tit}</div><div class="pv-s">${info}</div><div class="pv-s">${quando} · <u>ver endereço</u></div></summary>${dadosLoja(r)}</details>`;
+}
+// lojas de um produto, conforme o módulo (validade: só a faixa; preço: só preços; ruptura: só lojas em ruptura)
+function lojasProdutoHTML(produto, modo, faixa) {
   let rs = filtraPV((VAL.todos || []).filter(r => r.produto === produto), true);
   let cab = '';
   if (modo === 'val') {
@@ -501,10 +512,7 @@ function abreProdutoPV(produto, modo, faixa) {
     rs = rs.filter(r => r.x.falta).sort(alfaLoja);
     cab = `<b style="color:var(--crit)">${rs.length} loja${rs.length === 1 ? '' : 's'} em ruptura</b> (visitadas e sem o produto na gôndola)`;
   }
-  abreModal(`<div class="spread"><h3>${h(produto)}</h3><button class="btn ghost" id="pp-x">Fechar</button></div>
-    <div class="muted num" style="font-size:14px">${cab}</div>
-    <div class="pv-big"><div class="pv-lista">${rs.length ? rs.map(r => linhasModo(r, modo)).join('') : '<div class="muted">Nenhuma loja.</div>'}</div></div>`);
-  $('#pp-x').onclick = fechaModal; $('#modal-box').classList.add('largo');
+  return `<div class="muted num pv-cab">${cab}</div><div class="pv-lista">${rs.length ? rs.map(r => linhasModo(r, modo)).join('') : '<div class="muted">Nenhuma loja.</div>'}</div>`;
 }
 function desenhaPV() {
   const box = $('#vl-c'); if (!box) return;
@@ -529,27 +537,27 @@ function desenhaPV() {
     const mostra = k => !so || so === k || (so === 'ra' && k !== 'v');
     const conta = fx.map(([k, , , f]) => L.filter(f));
     box.innerHTML = `<div class="kpis num">${fx.map(([k, t, cor], i) => `<div class="kpi"><b style="color:${cor}">${grupo(conta[i]).length}</b><span>${k === 'r' ? 'Produtos com menos de 7 dias' : k === 'a' ? 'Produtos com 7 a 9 dias' : 'Produtos com 10 dias ou mais'}</span></div>`).join('')}</div>
-      ${fx.map(([k, t, cor], i) => mostra(k) ? `<div class="card stack" style="border-left:5px solid ${cor}"><h3 style="color:${cor}">${t}</h3>${lista(grupo(conta[i]).map(([p, rs]) => { const q = rs.reduce((s, r) => s + (+r.x.qtd || 0), 0); return liPV(`${h(p)} <span class="muted">›</span>`, [`${rs.length} loja${rs.length > 1 ? 's' : ''}${k !== 'v' && q ? ` · <b style="color:${cor}">${q} un a vender</b>` : ''} · mais próxima ${dataBR(rs.map(r => r.x.val).sort()[0]).slice(0, 5)}`], cor, `data-prod="${h(p)}" data-modo="val" data-fx="${k}"`); }), 'Nenhum produto nesta faixa.')}</div>` : '').join('')}
-      <div class="muted" style="font-size:12.5px">Toque no produto para ver as lojas daquela faixa, com a validade e a quantidade a vender.</div>`;
+      ${fx.map(([k, t, cor], i) => mostra(k) ? `<div class="card stack" style="border-left:5px solid ${cor}"><h3 style="color:${cor}">${t}</h3>${lista(grupo(conta[i]).map(([p, rs]) => { const q = rs.reduce((s, r) => s + (+r.x.qtd || 0), 0); return produtoPV(`${h(p)} <span class="muted pv-seta">›</span>`, [`${rs.length} loja${rs.length > 1 ? 's' : ''}${k !== 'v' && q ? ` · <b style="color:${cor}">${q} un a vender</b>` : ''} · mais próxima ${dataBR(rs.map(r => r.x.val).sort()[0]).slice(0, 5)}`], cor, p, 'val', k); }), 'Nenhum produto nesta faixa.')}</div>` : '').join('')}
+      <div class="muted" style="font-size:12.5px">Toque no produto para abrir as lojas daquela faixa logo abaixo; toque no cliente para ver o endereço, com a validade e a quantidade a vender.</div>`;
   } else if (VAL.aba === 'pq') {
     // só preço: produto → lojas com o preço
     const L = filtraPV((VAL.todos || []).filter(r => !r.x.falta && typeof r.x.preco === 'number'));
     const G = grupo(L);
     box.innerHTML = `<div class="kpis num"><div class="kpi"><b>${G.length}</b><span>Produtos com preço</span></div><div class="kpi"><b>${L.length}</b><span>Preços lançados</span></div><div class="kpi"><b>${new Set(L.map(r => r.v.lojaId)).size}</b><span>Lojas pesquisadas</span></div></div>
       <div class="card stack"><h3>💲 Preço de ponta por produto</h3>${lista(G.map(([p, rs]) => { const pr = rs.map(r => r.x.preco); const mn = Math.min(...pr), mx = Math.max(...pr);
-        return liPV(`${h(p)} <span class="muted">›</span>`, [`<span class="pv-dest2">${pr.length > 1 && mn !== mx ? `<b style="color:#1E7A44">${brl(mn)}</b> a <b style="color:var(--crit)">${brl(mx)}</b>` : `<b>${brl(mn)}</b>`}</span> · média <b>${brl(pr.reduce((s, x) => s + x, 0) / pr.length)}</b> · ${rs.length} loja${rs.length > 1 ? 's' : ''}`], '#F4BC1C', `data-prod="${h(p)}" data-modo="pq"`); }), 'Nenhum preço lançado com esses filtros.')}</div>
-      <div class="muted" style="font-size:12.5px">Toque no produto para ver o preço em cada loja (menor preço em verde, maior em vermelho).</div>`;
+        return produtoPV(`${h(p)} <span class="muted pv-seta">›</span>`, [`<span class="pv-dest2">${pr.length > 1 && mn !== mx ? `<b style="color:#1E7A44">${brl(mn)}</b> a <b style="color:var(--crit)">${brl(mx)}</b>` : `<b>${brl(mn)}</b>`}</span> · média <b>${brl(pr.reduce((s, x) => s + x, 0) / pr.length)}</b> · ${rs.length} loja${rs.length > 1 ? 's' : ''}`], '#F4BC1C', p, 'pq'); }), 'Nenhum preço lançado com esses filtros.')}</div>
+      <div class="muted" style="font-size:12.5px">Toque no produto para abrir o preço em cada loja (menor preço em verde, maior em vermelho).</div>`;
   } else {
     // ruptura: produto → lojas visitadas sem o produto
     const L = filtraPV((VAL.todos || []).filter(r => r.x.falta)); const G = grupo(L);
     const nLojas = new Set(filtraPV(VAL.todos || []).map(r => r.v.lojaId)).size;
     box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${G.length}</b><span>Produtos com ruptura</span></div><div class="kpi"><b style="color:var(--crit)">${L.length}</b><span>Rupturas (loja × produto)</span></div><div class="kpi"><b>${new Set(L.map(r => r.v.lojaId)).size}</b><span>Lojas com alguma ruptura</span></div></div>
-      <div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🚫 Produtos em ruptura</h3>${lista(G.map(([p, rs]) => liPV(`${h(p)} <span class="muted">›</span>`, [`<b style="color:var(--crit)">${rs.length} loja${rs.length > 1 ? 's' : ''} em ruptura</b>${nLojas ? ` · ${Math.round(rs.length / nLojas * 100)}% das lojas pesquisadas` : ''} · última ${dataBR(rs.map(r => r.d).sort().pop()).slice(0, 5)}`], 'var(--crit)', `data-prod="${h(p)}" data-modo="rup"`)), 'Nenhuma ruptura com esses filtros.')}</div>
-      <div class="muted" style="font-size:12.5px">Toque no produto para ver as lojas visitadas que estão sem ele na gôndola.</div>`;
+      <div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🚫 Produtos em ruptura</h3>${lista(G.map(([p, rs]) => produtoPV(`${h(p)} <span class="muted pv-seta">›</span>`, [`<b style="color:var(--crit)">${rs.length} loja${rs.length > 1 ? 's' : ''} em ruptura</b>${nLojas ? ` · ${Math.round(rs.length / nLojas * 100)}% das lojas pesquisadas` : ''} · última ${dataBR(rs.map(r => r.d).sort().pop()).slice(0, 5)}`], 'var(--crit)', p, 'rup')), 'Nenhuma ruptura com esses filtros.')}</div>
+      <div class="muted" style="font-size:12.5px">Toque no produto para abrir as lojas visitadas que estão sem ele na gôndola; toque no cliente para ver o endereço.</div>`;
   }
   ligaPV(box); ligaCsv();
 }
-function ligaPV(box) { box.classList.add('pv-big'); box.querySelectorAll('[data-prod]').forEach(el => el.onclick = () => abreProdutoPV(el.dataset.prod, el.dataset.modo || 'val', el.dataset.fx)); }
+function ligaPV(box) { box.classList.add('pv-big'); box.querySelectorAll('details.pv-prodbox').forEach(d => d.addEventListener('toggle', () => { if (d.open && !d.dataset.ok) { d.dataset.ok = '1'; d.querySelector('.pv-corpo').innerHTML = lojasProdutoHTML(d.dataset.p, d.dataset.modo, d.dataset.fx); } })); }
 function ligaCsv() {
   const T = VAL.todos || [];
   $('#vl-csv').onclick = () => {

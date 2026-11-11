@@ -358,3 +358,15 @@ td.pv-clic:hover,tr.pv-clic:hover td{text-decoration:underline;text-decoration-c
 .pv-dest2{font-weight:700;color:var(--ink)}
 .pv-tag{display:inline-block;color:#fff;font-size:11px;font-weight:700;border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:middle}
 @media (min-width:760px){#v-val .pv-lista{grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}}
+
+.pv-prodbox>summary{list-style:none;cursor:pointer}.pv-prodbox>summary::-webkit-details-marker{display:none}
+.pv-prodbox[open]{background:var(--sunk,#F6F7F9)}
+.pv-prodbox[open] .pv-seta{display:inline-block;transform:rotate(90deg)}
+.pv-corpo{margin-top:10px;display:grid;gap:8px}
+.pv-cab{font-size:13.5px}
+.pv-loja{display:block;border:1px solid var(--line);border-left:5px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--surface)}
+.pv-loja>summary{list-style:none;cursor:pointer}.pv-loja>summary::-webkit-details-marker{display:none}
+.pv-loja .pv-t{font-weight:700;font-size:15px}
+.pv-end{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:13.5px;line-height:1.5;display:grid;gap:2px}
+.pv-end a{font-weight:700;color:var(--brand-ink,#9A6B00)}
+#v-val .pv-corpo .pv-lista{grid-template-columns:1fr}
