@@ -40,7 +40,7 @@ h3{font-family:var(--f-display);font-weight:700;font-size:17px;margin:0}
 main{max-width:640px;margin:0 auto;padding:16px 16px 48px;display:flex;flex-direction:column;gap:16px;min-width:0}
 .field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .field>span{font-size:13px;font-weight:600;color:var(--muted)}
-input[type=text],input[type=number],input[type=date],input[type=month],input[type=email],input[type=password],input[type=tel],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:11px 12px;width:100%;min-width:0}
+input[type=text],input[type=number],input[type=date],input[type=month],input[type=email],input[type=password],input[type=tel],input[type=search],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:11px 12px;width:100%;min-width:0}
 textarea{resize:vertical;min-height:84px}
 .btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 14px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
