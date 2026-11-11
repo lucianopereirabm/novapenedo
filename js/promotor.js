@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-11.5';
+export const VERSAO_APP = '2026-11-11.6';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -718,7 +718,7 @@ function salvaPreco(inp, avancar) {
 }
 // validade: menos de 10 dias = amarelo; menos de 7 = vermelho
 const diasAte = d => Math.round((new Date(d + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5);
-const corVal = d => { if (!d) return ''; const n = diasAte(d); return n < 7 ? 'crit' : n < 10 ? 'warn' : ''; };
+const corVal = d => { if (!d) return ''; const n = diasAte(d); return n < 7 ? 'crit' : n < 10 ? 'warn' : 'ok'; };
 const txtVal = d => { if (!d) return ''; const n = diasAte(d); return n < 0 ? `vencido há ${-n} dia${n < -1 ? 's' : ''}` : n === 0 ? 'vence hoje' : `vence em ${n} dia${n > 1 ? 's' : ''}`; };
 function renderPesquisa(v) {
   const box = $('#v-pp');

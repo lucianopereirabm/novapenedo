@@ -322,3 +322,4 @@ body.so-leitura #p-geo-b, body.so-leitura #p-dgeo-b, body.so-leitura #md-local {
 .pp-val.crit input{border-color:var(--crit);background:#FDECEC}.pp-val.crit small{color:var(--crit)}
 .pp-val.off{opacity:.4}
 .pp-qtd input{width:82px}
+.pp-val.ok input{border-color:#2E9D5B;background:#E9F7EF}.pp-val.ok small{color:#1E7A44}

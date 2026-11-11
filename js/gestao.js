@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.4';
+const VERSAO_GESTAO = '2026-11-11.5';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -422,6 +422,7 @@ async function carregaValidades(forca) {
       }); });
       VAL.todos = [...ult.values()].map(r => Object.assign(r, { faltam: r.x.val ? diasAteV(r.x.val) : null }));
       VAL.cache = VAL.todos.filter(r => r.x.val && !r.x.falta && r.faltam < 10).sort((a, b) => a.faltam - b.faltam || a.produto.localeCompare(b.produto));
+      VAL.verdes = VAL.todos.filter(r => r.x.val && !r.x.falta && r.faltam >= 10).sort((a, b) => a.faltam - b.faltam || a.produto.localeCompare(b.produto));
       VAL.em = Date.now();
     } catch (e) { toast(erroMsg(e)); } finally { VAL.carregando = null; }
   })();
@@ -466,20 +467,22 @@ function desenhaPV() {
   const proms = [...new Set(T.map(r => r.v.promotorId))].sort((a, b) => promNome(a).localeCompare(promNome(b)));
   $('#vf-loja').innerHTML = `<option value="">Todas as lojas (${lojas.length})</option>` + lojas.map(([id, l]) => `<option value="${h(id)}" ${VAL.f.loja === id ? 'selected' : ''}>${h(l.cod)} · ${h(l.nome)} · ${h(l.cid)}</option>`).join('');
   $('#vf-prom').innerHTML = `<option value="">Todos os promotores</option>` + proms.map(p => `<option value="${h(p)}" ${VAL.f.prom === p ? 'selected' : ''}>${h(promNome(p))}</option>`).join('');
-  const opSo = VAL.aba === 'val' ? [['', 'Vermelho e amarelo'], ['r', 'Só vermelho (< 7 dias)'], ['a', 'Só amarelo (7 a 9 dias)']] : [['', 'Preços e rupturas'], ['p', 'Só com preço'], ['r', 'Só rupturas']];
+  const opSo = VAL.aba === 'val' ? [['', 'Todas as faixas'], ['r', 'Só vermelho (< 7 dias)'], ['a', 'Só amarelo (7 a 9 dias)'], ['ra', 'Vermelho e amarelo'], ['v', 'Só verde (10 dias ou mais)']] : [['', 'Preços e rupturas'], ['p', 'Só com preço'], ['r', 'Só rupturas']];
   $('#vf-so').innerHTML = opSo.map(([k, t]) => `<option value="${k}" ${VAL.f.so === k ? 'selected' : ''}>${t}</option>`).join('');
   box.className = 'stack';
   if (VAL.aba === 'val') {
-    let L = filtraPV(VAL.cache || []); if (VAL.f.so === 'r') L = L.filter(r => r.faltam < 7); if (VAL.f.so === 'a') L = L.filter(r => r.faltam >= 7);
-    const verm = L.filter(r => r.faltam < 7), amar = L.filter(r => r.faltam >= 7);
+    const so = VAL.f.so; const L = filtraPV(VAL.cache || []); const verdes = filtraPV(VAL.verdes || []);
+    const verm = ['', 'r', 'ra'].includes(so) ? L.filter(r => r.faltam < 7) : [], amar = ['', 'a', 'ra'].includes(so) ? L.filter(r => r.faltam >= 7) : [], verd = ['', 'v'].includes(so) ? verdes : [];
     const qt = lst => lst.reduce((s, r) => s + (+r.x.qtd || 0), 0);
     const tabela = (lst, cor, fundo) => lst.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Validade</th><th>Produto</th><th class="r">Qtd a vender</th><th>Loja</th><th>Promotor</th><th>Visto em</th></tr></thead><tbody>${lst.map(r => { const lj = lojaDe(r); return `<tr style="background:${fundo}">
       <td style="white-space:nowrap"><b style="color:${cor}">${dataBR(r.x.val)}</b><div style="font-size:12px;color:${cor}">${faltamTxt(r.faltam)}</div></td>
       <td>${h(r.produto)}</td><td class="r"><b>${r.x.qtd ? r.x.qtd + ' un' : '—'}</b></td><td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:12px">${h(lj.cid)}</div></td><td>${h(promNome(r.v.promotorId))}</td>
       <td style="white-space:nowrap">${dataBR(r.d).slice(0, 5)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nenhum produto nesta faixa.</div>';
-    box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${verm.length}</b><span>Menos de 7 dias (vermelho)${qt(verm) ? ` · ${qt(verm)} un a vender` : ''}</span></div><div class="kpi"><b style="color:#9A6B00">${amar.length}</b><span>De 7 a 9 dias (amarelo)${qt(amar) ? ` · ${qt(amar)} un a vender` : ''}</span></div></div>
-      ${VAL.f.so !== 'a' ? `<div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🔴 Menos de 7 dias · data apertada</h3>${tabela(verm, 'var(--crit)', '#FDECEC')}</div>` : ''}
-      ${VAL.f.so !== 'r' ? `<div class="card stack" style="border-left:5px solid #E0A800"><h3 style="color:#9A6B00">🟡 Menos de 10 dias</h3>${tabela(amar, '#9A6B00', '#FFF6D6')}</div>` : ''}
+    const nV = L.filter(r => r.faltam < 7), nA = L.filter(r => r.faltam >= 7);
+    box.innerHTML = `<div class="kpis num"><div class="kpi"><b style="color:var(--crit)">${nV.length}</b><span>Menos de 7 dias (vermelho)${qt(nV) ? ` · ${qt(nV)} un a vender` : ''}</span></div><div class="kpi"><b style="color:#9A6B00">${nA.length}</b><span>De 7 a 9 dias (amarelo)${qt(nA) ? ` · ${qt(nA)} un a vender` : ''}</span></div><div class="kpi"><b style="color:#1E7A44">${verdes.length}</b><span>10 dias ou mais (verde)</span></div></div>
+      ${['', 'r', 'ra'].includes(so) ? `<div class="card stack" style="border-left:5px solid var(--crit)"><h3 style="color:var(--crit)">🔴 Menos de 7 dias · data apertada</h3>${tabela(verm, 'var(--crit)', '#FDECEC')}</div>` : ''}
+      ${['', 'a', 'ra'].includes(so) ? `<div class="card stack" style="border-left:5px solid #E0A800"><h3 style="color:#9A6B00">🟡 Menos de 10 dias</h3>${tabela(amar, '#9A6B00', '#FFF6D6')}</div>` : ''}
+      ${['', 'v'].includes(so) ? `<div class="card stack" style="border-left:5px solid #2E9D5B"><h3 style="color:#1E7A44">🟢 10 dias ou mais · validade boa</h3>${tabela(verd, '#1E7A44', '#E9F7EF')}</div>` : ''}
       <div class="muted" style="font-size:12px">O promotor informa na pesquisa de preço a validade mais próxima e a quantidade de unidades com essa validade na gôndola (a vender). Quando ele volta na loja e informa de novo, vale a informação mais recente.</div>`;
   } else {
     let L = filtraPV(T.filter(r => r.x.falta || typeof r.x.preco === 'number'));
@@ -490,16 +493,16 @@ function desenhaPV() {
     const nRup = L.filter(r => r.x.falta).length;
     box.innerHTML = `<div class="kpis num"><div class="kpi"><b>${L.length - nRup}</b><span>Preços lançados</span></div><div class="kpi"><b style="color:var(--crit)">${nRup}</b><span>Rupturas</span></div><div class="kpi"><b>${new Set(L.map(r => r.v.lojaId)).size}</b><span>Lojas pesquisadas</span></div></div>
       <div class="card stack"><h3>Resumo por produto</h3>${resumo.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Produto</th><th class="r">Lojas c/ preço</th><th class="r">Menor</th><th class="r">Média</th><th class="r">Maior</th><th class="r">Rupturas</th></tr></thead><tbody>${resumo.map(([p, g]) => { const n = g.precos.length; return `<tr><td>${h(p)}</td><td class="r">${n}</td><td class="r">${n ? brl(Math.min(...g.precos)) : '—'}</td><td class="r">${n ? brl(g.precos.reduce((s, x) => s + x, 0) / n) : '—'}</td><td class="r">${n ? brl(Math.max(...g.precos)) : '—'}</td><td class="r" style="color:${g.rup ? 'var(--crit)' : 'inherit'}">${g.rup || '—'}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nenhuma pesquisa lançada com esses filtros.</div>'}</div>
-      <div class="card stack"><h3>Por loja</h3>${L.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Loja</th><th>Produto</th><th class="r">Preço de ponta</th><th>Validade</th><th>Promotor</th><th>Data</th></tr></thead><tbody>${L.slice().sort((a, b) => lojaDe(a).nome.localeCompare(lojaDe(b).nome) || a.produto.localeCompare(b.produto)).map(r => { const lj = lojaDe(r); const cor = r.faltam == null ? '' : r.faltam < 7 ? 'var(--crit)' : r.faltam < 10 ? '#9A6B00' : ''; return `<tr>
+      <div class="card stack"><h3>Por loja</h3>${L.length ? `<div style="overflow-x:auto"><table class="num" style="font-size:13px;width:100%"><thead><tr><th>Loja</th><th>Produto</th><th class="r">Preço de ponta</th><th>Validade</th><th>Promotor</th><th>Data</th></tr></thead><tbody>${L.slice().sort((a, b) => lojaDe(a).nome.localeCompare(lojaDe(b).nome) || a.produto.localeCompare(b.produto)).map(r => { const lj = lojaDe(r); const cor = r.faltam == null ? '' : r.faltam < 7 ? 'var(--crit)' : r.faltam < 10 ? '#9A6B00' : '#1E7A44'; return `<tr>
         <td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:12px">${h(lj.cid)}</div></td><td>${h(r.produto)}</td>
         <td class="r"><b>${r.x.falta ? '<span style="color:var(--crit)">ruptura</span>' : brl(r.x.preco)}</b></td>
         <td style="white-space:nowrap;color:${cor}">${r.x.val && !r.x.falta ? dataBR(r.x.val) + (r.x.qtd ? ` · ${r.x.qtd} un` : '') : '—'}</td><td>${h(promNome(r.v.promotorId))}</td><td style="white-space:nowrap">${dataBR(r.d).slice(0, 5)}</td></tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:13px">Nada lançado com esses filtros.</div>'}</div>`;
   }
   $('#vl-csv').onclick = () => {
     const pv = VAL.aba === 'val';
-    let L = pv ? filtraPV(VAL.cache || []) : filtraPV(T.filter(r => r.x.falta || typeof r.x.preco === 'number'));
+    let L = pv ? filtraPV((VAL.cache || []).concat(VAL.verdes || [])) : filtraPV(T.filter(r => r.x.falta || typeof r.x.preco === 'number'));
     const linhas = [pv ? ['Faixa', 'Validade', 'Dias', 'Qtd a vender', 'Produto', 'Cód. loja', 'Loja', 'Cidade', 'Promotor', 'Visto em'] : ['Cód. loja', 'Loja', 'Cidade', 'Produto', 'Preço', 'Ruptura', 'Validade', 'Qtd', 'Promotor', 'Data']]
-      .concat(L.map(r => { const lj = lojaDe(r); return pv ? [r.faltam < 7 ? 'VERMELHO' : 'AMARELO', dataBR(r.x.val), r.faltam, r.x.qtd || '', r.produto, lj.cod, lj.nome, lj.cid, promNome(r.v.promotorId), dataBR(r.d)]
+      .concat(L.map(r => { const lj = lojaDe(r); return pv ? [r.faltam < 7 ? 'VERMELHO' : r.faltam < 10 ? 'AMARELO' : 'VERDE', dataBR(r.x.val), r.faltam, r.x.qtd || '', r.produto, lj.cod, lj.nome, lj.cid, promNome(r.v.promotorId), dataBR(r.d)]
         : [lj.cod, lj.nome, lj.cid, r.produto, r.x.falta ? '' : String(r.x.preco).replace('.', ','), r.x.falta ? 'SIM' : '', r.x.val ? dataBR(r.x.val) : '', r.x.qtd || '', promNome(r.v.promotorId), dataBR(r.d)]; }));
     const txt = '﻿' + linhas.map(l => l.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = `${pv ? 'Validades' : 'Pesquisa de preco'} ${dataHoje()}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -775,8 +778,8 @@ async function gravaLocalLoja(loja, v, date, id) {
 // Quadros do alto da Torre: abrem a lista do que está por trás do número
 function kpiValidade() {
   if (!VAL.todos) return '<b>…</b><span>Validades e pesquisa de preço ›</span>';
-  const v = VAL.cache || []; const r = v.filter(x => x.faltam < 7).length, a = v.length - r;
-  return `<b><span style="color:var(--crit)">${r}</span><small> 🔴</small> <span style="color:#9A6B00">${a}</span><small> 🟡</small></b><span>Validades · ${VAL.todos.filter(x => typeof x.x.preco === 'number').length} preços pesquisados ›</span>`;
+  const v = VAL.cache || []; const r = v.filter(x => x.faltam < 7).length, a = v.length - r, g = (VAL.verdes || []).length;
+  return `<b><span style="color:var(--crit)">${r}</span><small> 🔴</small> <span style="color:#9A6B00">${a}</span><small> 🟡</small> <span style="color:#1E7A44">${g}</span><small> 🟢</small></b><span>Validades · ${VAL.todos.filter(x => typeof x.x.preco === 'number').length} preços pesquisados ›</span>`;
 }
 function irPara(tab) { const b = document.querySelector(`.side-item[data-go="${tab}"]`); if (b) b.click(); }
 function kpiLista(k, dias) {
@@ -862,7 +865,7 @@ async function detalheVisita(date, id, vInfo) {
        const ck = q => q.replace(/[.~*/\[\]]/g, '_'); const P = v.precos || {}; const atuais = new Map(S.pesquisa.map(q => [ck(q), q]));
        const resp = Object.keys(P).filter(k => P[k]).map(k => [atuais.get(k) || k, P[k]]);
        const rup = resp.filter(([, x]) => x.falta).length, npr = resp.filter(([, x]) => !x.falta && typeof x.preco === 'number').length; const nInf = S.pesquisa.filter(q => !P[ck(q)]).length;
-       const vtag = x => { if (!x.val || x.falta) return ''; const n = Math.round((new Date(x.val + 'T12:00:00') - new Date(date + 'T12:00:00')) / 864e5); const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : 'var(--muted)'; return `<div style="font-size:12px;font-weight:600;color:${cor}">validade ${x.val.split('-').reverse().join('/')} (${n < 0 ? 'vencido' : n + ' dia' + (n === 1 ? '' : 's')})</div>`; };
+       const vtag = x => { if (!x.val || x.falta) return ''; const n = Math.round((new Date(x.val + 'T12:00:00') - new Date(date + 'T12:00:00')) / 864e5); const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; return `<div style="font-size:12px;font-weight:600;color:${cor}">validade ${x.val.split('-').reverse().join('/')} (${n < 0 ? 'vencido' : n + ' dia' + (n === 1 ? '' : 's')})</div>`; };
        return `<div><div class="label">Pesquisa de preço · ${npr} preço(s) · ${rup} ruptura(s)${nInf ? ` · ${nInf} não informado(s)` : ''}</div>${resp.length ? resp.map(([q, x]) => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px"><span style="min-width:0">${h(q)}</span><span style="text-align:right"><b class="num" style="white-space:nowrap">${x.falta ? '<span style="color:var(--crit)">ruptura</span>' : typeof x.preco === 'number' ? brl(x.preco) : '<span class="muted">sem preço</span>'}</b>${vtag(x)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">Nenhum item lançado nesta visita.</div>'}</div>`;
      })()}
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}
