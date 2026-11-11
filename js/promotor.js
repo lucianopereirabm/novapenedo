@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-11.3';
+export const VERSAO_APP = '2026-11-11.4';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -701,7 +701,7 @@ function salvaPreco(inp, avancar) {
   if (!S.visita || !S.vis[S.visita.id]) return;
   const q = S.pesquisa[+inp.dataset.pq]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)];
   const t = inp.value.trim(); const n = t ? +t.replace(/\./g, '').replace(',', '.') : null;
-  if (n == null) { if (atual && !atual.falta && typeof atual.preco === 'number') atualiza({ precos: { [q]: atual.val ? { val: atual.val, ts: Date.now() } : null } }); return; }
+  if (n == null) { if (atual && !atual.falta && typeof atual.preco === 'number') atualiza({ precos: { [q]: (atual.val || atual.qtd != null) ? Object.fromEntries(Object.entries({ val: atual.val, qtd: atual.qtd, ts: Date.now() }).filter(([, x]) => x != null)) : null } }); return; }
   if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
   const val = Math.round(n * 100) / 100;
   if (!(atual && atual.preco === val)) atualiza({ precos: { [q]: Object.assign({}, atual && !atual.falta ? atual : {}, { preco: val, ts: Date.now() }) } });
@@ -721,6 +721,7 @@ function renderPesquisa(v) {
     S.pesquisa.forEach((q, i) => { const x = resp[chaveQ(q)] || {}; const inp = box.querySelector(`[data-pq="${i}"]`), bt = box.querySelector(`[data-pf="${i}"]`); if (!inp) return;
       if (document.activeElement !== inp) { const novo = typeof x.preco === 'number' ? brl2(x.preco) : (x.falta ? '' : inp.value); if (inp.value !== novo) inp.value = novo; }
       inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode;
+      const qt = box.querySelector(`[data-pqt="${i}"]`); if (qt) { if (document.activeElement !== qt) qt.value = x.qtd != null ? x.qtd : ''; qt.disabled = !pode || !!x.falta; qt.closest('.pp-val').classList.toggle('off', !!x.falta); }
       const vd = box.querySelector(`[data-pv="${i}"]`); if (vd) { if (document.activeElement !== vd) vd.value = x.val || ''; vd.disabled = !pode || !!x.falta; const w = vd.closest('.pp-val'); w.className = 'pp-val ' + corVal(x.val) + (x.falta ? ' off' : ''); w.querySelector('small').textContent = txtVal(x.val); } });
     return;
   }
@@ -729,6 +730,7 @@ function renderPesquisa(v) {
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
       <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
       <label class="pp-val ${corVal(x.val)}${x.falta ? ' off' : ''}"><span>Validade</span><input type="date" data-pv="${i}" value="${h(x.val || '')}" ${!pode || x.falta ? 'disabled' : ''}><small>${txtVal(x.val)}</small></label>
+      <label class="pp-val pp-qtd${x.falta ? ' off' : ''}"><span>Qtd a vender</span><input type="number" inputmode="numeric" min="0" step="1" data-pqt="${i}" value="${x.qtd != null ? x.qtd : ''}" placeholder="un" ${!pode || x.falta ? 'disabled' : ''}><small></small></label>
       <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Ruptura</button></div></div>`; }).join('');
   if (S.pesquisa.length > 8) { // lista grande: campo para achar o produto
     box.insertAdjacentHTML('afterbegin', `<input type="search" id="pp-busca" placeholder="Buscar produto (nome ou código)" autocomplete="off" style="margin-bottom:6px">`);
@@ -749,8 +751,15 @@ function renderPesquisa(v) {
     const q = S.pesquisa[+inp.dataset.pv]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)] || {};
     const val = inp.value || null; if ((atual.val || null) === val) return;
     const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (val) novo.val = val; else delete novo.val;
-    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val) ? novo : null } });
+    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
     if (val && diasAte(val) < 10) toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}.`, 4000);
+  });
+  box.querySelectorAll('[data-pqt]').forEach(inp => inp.onchange = () => { // quantidade com essa validade na gôndola (a vender)
+    if (!S.visita || !S.vis[S.visita.id]) return;
+    const q = S.pesquisa[+inp.dataset.pqt]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)] || {};
+    const n = inp.value === '' ? null : Math.max(0, Math.round(+inp.value)); if ((atual.qtd ?? null) === n) return;
+    const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (n != null) novo.qtd = n; else delete novo.qtd;
+    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
   });
   box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
     const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
