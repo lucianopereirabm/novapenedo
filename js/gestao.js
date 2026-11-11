@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.11';
+const VERSAO_GESTAO = '2026-11-11.12';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -832,10 +832,11 @@ function linhaEnvio(v) {
   return `<div class="note warn">Feito sem sinal: ${longe(atrasoIn) ? `check-in feito às ${hm(v.checkin || v.registrado)} e recebido às ${hm(rIn)}` : ''}${longe(atrasoIn) && longe(atrasoOut) ? ' · ' : ''}${longe(atrasoOut) ? `check-out feito às ${hm(v.checkout)} e recebido às ${hm(r)}` : ''}. Os horários e o GPS valem do momento em que foram feitos no celular.</div>`;
 }
 // Grava o GPS do check-in como local exato da loja e encerra o alerta de "fora da loja" da visita como conferido
-async function gravaLocalLoja(loja, v, date, id) {
-  await updateDoc(doc(db, 'lojas', loja.id), { lat: v.gpsIn.lat, lng: v.gpsIn.lng, coordFonte: 'check-in ' + dataBR(date), atualizado: Date.now() });
-  if (foraLoja(v) && !v.alertaTratado) {
-    const t = { status: 'ok', obs: 'Local da loja corrigido com o GPS deste check-in', por: (auth.currentUser && auth.currentUser.email || '').split('@')[0], em: Date.now() };
+async function gravaLocalLoja(loja, v, date, id, saida) {
+  const g = saida ? v.gpsOut : v.gpsIn;
+  await updateDoc(doc(db, 'lojas', loja.id), { lat: g.lat, lng: g.lng, coordFonte: (saida ? 'check-out ' : 'check-in ') + dataBR(date), atualizado: Date.now() });
+  if ((foraLoja(v) || foraSaida(v)) && !v.alertaTratado) {
+    const t = { status: 'ok', obs: `Local da loja corrigido com o GPS deste ${saida ? 'check-out' : 'check-in'}`, por: (auth.currentUser && auth.currentUser.email || '').split('@')[0], em: Date.now() };
     await updateDoc(doc(db, 'dias', date, 'visitas', id), { alertaTratado: t }); v.alertaTratado = t;
   }
 }
@@ -863,7 +864,7 @@ function kpiLista(k, dias) {
     const tags = v => [v.rostoOk === false ? '<span class="tag no">rosto ≠ cadastro</span>' : '', foraSaida(v) ? `<span class="tag no">⚠️ saída fora da loja (${v.distOut} m)</span>` : '', v.rostoOutOk === false ? '<span class="tag no">rosto ≠ na saída</span>' : '', foraLoja(v) ? `<span class="tag no">⚠️ fora da loja · ${v.distIn} m</span>` : ''].join(' ');
     const todos = dias.flatMap(d => d.paradas.filter(x => temAlerta(x.v)).map(x => [d, x]));
     const ab = todos.filter(([, x]) => !x.v.alertaTratado), tr = todos.filter(([, x]) => x.v.alertaTratado);
-    const acoes = (d, x) => S.leitura ? '' : `<div class="row" style="gap:6px;padding:0 4px 10px 44px;flex-wrap:wrap"><input type="text" placeholder="Observação (opcional): ex. falou com o gerente, GPS falhou…" data-ao="${h(x.id)}" style="flex:1 1 220px;font-size:13px;padding:6px 8px">${x.v.gpsIn ? `<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${x.v.gpsIn.lat},${x.v.gpsIn.lng}">🗺 Ver GPS no mapa</a>` : ''}${foraLoja(x.v) && x.v.gpsIn ? `<button class="btn sm" data-at-loc="${h(x.id)}" title="O promotor estava na loja: o ponto cadastrado é que estava errado">📍 Corrigir local da loja</button>` : ''}<button class="btn sm" data-at-ok="${h(x.id)}">✓ Justificado</button><button class="btn sm danger" data-at-ir="${h(x.id)}">✗ Irregular</button></div>`;
+    const acoes = (d, x) => S.leitura ? '' : `<div class="row" style="gap:6px;padding:0 4px 10px 44px;flex-wrap:wrap"><input type="text" placeholder="Observação (opcional): ex. falou com o gerente, GPS falhou…" data-ao="${h(x.id)}" style="flex:1 1 220px;font-size:13px;padding:6px 8px">${x.v.gpsIn ? `<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${x.v.gpsIn.lat},${x.v.gpsIn.lng}">🗺 Ver GPS no mapa</a>` : ''}${foraLoja(x.v) && x.v.gpsIn ? `<button class="btn sm" data-at-loc="${h(x.id)}" title="O promotor estava na loja: o ponto cadastrado é que estava errado">📍 Corrigir local da loja</button>` : ''}${foraSaida(x.v) && x.v.gpsOut ? `<a class="btn sm ghost" target="_blank" rel="noopener" href="https://www.google.com/maps?q=${x.v.gpsOut.lat},${x.v.gpsOut.lng}">🗺 GPS da saída</a>${!foraLoja(x.v) ? '' : ''}<button class="btn sm" data-at-locs="${h(x.id)}" title="Usar o GPS do check-out como local exato da loja">📍 Corrigir local com a saída</button>` : ''}<button class="btn sm" data-at-ok="${h(x.id)}">✓ Justificado</button><button class="btn sm danger" data-at-ir="${h(x.id)}">✗ Irregular</button></div>`;
     const res = x => { const t = x.v.alertaTratado; return `<span class="tag ${t.status === 'ok' ? 'ok' : 'no'}">${t.status === 'ok' ? '✓ justificado' : '✗ irregular'}</span>${t.obs ? ' <span class="muted" style="font-size:12px">' + h(t.obs) + '</span>' : ''} <span class="muted" style="font-size:11px">· ${h(t.por || '')} ${hm(t.em)}</span>`; };
     corpo = `<div class="label">Para validar (${ab.length})</div><div class="paradas">${ab.map(([d, x]) => linha(d, x, tags(x.v)) + acoes(d, x)).join('') || '<div class="muted" style="padding:6px 0">Nenhum alerta aberto. ✓</div>'}</div>
       ${tr.length ? `<div class="label" style="margin-top:10px">Encerrados (${tr.length})</div><div class="paradas">${tr.map(([d, x]) => linha(d, x, tags(x.v) + ' ' + res(x)) + (S.leitura ? '' : `<div style="padding:0 4px 8px 44px"><button class="btn sm ghost" data-at-re="${h(x.id)}">Reabrir</button></div>`)).join('')}</div>` : ''}`;
@@ -886,6 +887,11 @@ function kpiLista(k, dias) {
     const x = dias.flatMap(d => d.paradas).find(y => y.id === b.dataset.atLoc); const loja = x && S.lojas.find(l => l.id === x.lojaId); if (!loja) return;
     if (!(await confirma(`Gravar o GPS deste check-in (precisão ${x.v.gpsIn.prec || '?'} m) como local exato de ${loja.nome} e encerrar o alerta como conferido? Confira antes no mapa se o ponto está na loja.`, 'Corrigir e encerrar'))) return;
     try { await gravaLocalLoja(loja, x.v, P.data, x.id); toast('Local da loja corrigido e alerta encerrado'); kpiLista('al', dias); } catch (e) { toast(erroMsg(e)); }
+  });
+  document.querySelectorAll('[data-at-locs]').forEach(b => b.onclick = async () => {
+    const x = dias.flatMap(d => d.paradas).find(y => y.id === b.dataset.atLocs); const loja = x && S.lojas.find(l => l.id === x.lojaId); if (!loja) return;
+    if (!(await confirma(`Gravar o GPS deste check-out (precisão ${x.v.gpsOut.prec || '?'} m) como local exato de ${loja.nome} e encerrar o alerta como conferido? Confira antes no mapa se o ponto está na loja.`, 'Corrigir e encerrar'))) return;
+    try { await gravaLocalLoja(loja, x.v, P.data, x.id, true); toast('Local da loja corrigido e alerta encerrado'); kpiLista('al', dias); } catch (e) { toast(erroMsg(e)); }
   });
   document.querySelectorAll('[data-at-re]').forEach(b => b.onclick = () => trata(b.dataset.atRe, null));
   document.querySelectorAll('[data-kprom]').forEach(b => b.onclick = () => { fechaModal(); P.sel = b.dataset.kprom; renderPainel(); window.scrollTo(0, 0); });
