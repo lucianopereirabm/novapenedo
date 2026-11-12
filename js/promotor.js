@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-11.9';
+export const VERSAO_APP = '2026-11-12.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -39,7 +39,7 @@ async function ativar(codigo) {
     const a = d.data();
     await signInWithEmailAndPassword(auth, emailPromotor(a.usuario), senhaPromotor(a.codigo));
     lsSet('np.usuario', a.usuario);
-    lsSet('np.cred', JSON.stringify({ u: a.usuario, c: a.codigo, pid: a.promotorId || '' }));
+    lsSet('np.cred', JSON.stringify({ u: a.usuario, c: a.codigo, pid: a.promotorId || '', k: c })); // k = código de ativação (fixo): usado para se atualizar sozinho se a gestão trocar a senha
     lsSet('np.ativNova', '1'); try { localStorage.removeItem('np.aviso'); } catch (e) {} // registra este celular como o aparelho do promotor // o celular fica ativado: depois do "Sair" basta o rosto
     // o código continua valendo (fixo) até a gestão desvincular o celular: serve para reativar se o app for apagado
     history.replaceState(null, '', location.pathname);
@@ -75,7 +75,13 @@ $('#volta-btn').onclick = async () => {
   $('#volta-btn').disabled = true; $('#volta-msg').textContent = 'Entrando…';
   try { await signInWithEmailAndPassword(auth, emailPromotor(cr.u), senhaPromotor(cr.c)); }
   catch (e) {
-    const c = String(e && e.code);
+    let c = String(e && e.code);
+    // a gestão trocou a senha técnica: busca a nova pelo código de ativação deste celular e entra de novo, sem pedir nada ao promotor
+    if (/wrong-password|invalid-credential/.test(c) && cr.k) {
+      try { const d = await getDoc(doc(db, 'ativacoes', cr.k)); const a = d.exists() && d.data();
+        if (a && (a.usuario !== cr.u || a.codigo !== cr.c)) { await signInWithEmailAndPassword(auth, emailPromotor(a.usuario), senhaPromotor(a.codigo)); lsSet('np.cred', JSON.stringify(Object.assign({}, cr, { u: a.usuario, c: a.codigo }))); lsSet('np.usuario', a.usuario); return; } }
+      catch (e2) { c = String(e2 && e2.code || c); }
+    }
     if (/wrong-password|invalid-credential|user-not-found|user-disabled/.test(c)) { localStorage.removeItem('np.cred'); telaLogin(); $('#at-msg').textContent = 'O acesso deste celular foi trocado pelo supervisor. Peça um novo QR de ativação.'; }
     else $('#volta-msg').textContent = erroMsg(e);
   } finally { $('#volta-btn').disabled = false; }

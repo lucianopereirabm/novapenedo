@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-12.2';
+const VERSAO_GESTAO = '2026-11-12.3';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1681,9 +1681,12 @@ function editaPromotor(p) {
       <label class="btn sm" style="cursor:pointer;width:fit-content">${!novo && S.rostos[p.id] ? 'Trocar foto' : 'Anexar foto'}<input type="file" id="ep-arq" accept="image/*" hidden></label>
       <div class="muted" style="font-size:12px" id="ep-fmsg">Foto de frente, rosto inteiro, boa luz, sem óculos escuros ou boné.</div></div></div>
     <label class="field"><span>Nome completo</span><input type="text" name="nome" value="${h(p.nome || '')}" required></label>
-    <div class="grid2" style="gap:10px"><label class="field"><span>Login do app</span><input type="text" name="usuario" autocapitalize="none" autocomplete="off" value="${h(a ? a.usuario : '')}" placeholder="${h(sugereUsuario(p.nome || '', p.id))}"></label>
-    <label class="field"><span>Senha do app (4 números)</span><input type="text" name="codigo" inputmode="numeric" maxlength="4" autocomplete="off" value="${h(a ? a.codigo : '')}" placeholder="ex.: ${codigoNovo()}"></label></div>
+    <details class="card" style="padding:10px 12px" ${novo ? 'open' : ''}><summary style="cursor:pointer;font-weight:700;font-size:14px">🔒 Acesso técnico do app <span class="muted" style="font-weight:500">(o promotor entra só pelo rosto · não precisa mexer)</span></summary>
+    ${a ? '<label class="row" style="gap:8px;margin:8px 0"><input type="checkbox" id="ep-mexe"> Quero trocar o login/senha técnicos (o celular dele precisará ser ativado de novo)</label>' : ''}
+    <div class="grid2" style="gap:10px"><label class="field"><span>Login do app</span><input type="text" name="usuario" ${a ? 'readonly' : ''} autocapitalize="none" autocomplete="new-password" data-lpignore="true" value="${h(a ? a.usuario : '')}" placeholder="${h(sugereUsuario(p.nome || '', p.id))}"></label>
+    <label class="field"><span>Senha do app (4 números)</span><input type="text" name="codigo" ${a ? 'readonly' : ''} inputmode="numeric" maxlength="4" autocomplete="new-password" data-lpignore="true" value="${h(a ? a.codigo : '')}" placeholder="ex.: ${codigoNovo()}"></label></div>
     <div class="muted" style="font-size:12.5px;margin-top:-6px">${a ? 'Ao mudar o login ou a senha, o promotor passa a entrar com os novos na hora. Quem estiver com o app aberto precisará entrar de novo.' : 'Deixe em branco para criar o acesso depois. O login usa só letras minúsculas e números, sem espaço nem acento.'}</div>
+    </details>
     <label class="field"><span>Base (cidade)</span><input type="text" name="base" value="${h(p.base || '')}"></label>
     <div class="label" style="margin-top:4px">Residência (para o deslocamento casa → loja)</div>
     <label class="field"><span>Endereço (rua, número, complemento, bairro)</span><input type="text" name="endereco" value="${h(p.endereco || '')}"></label>
@@ -1700,6 +1703,7 @@ function editaPromotor(p) {
   $('#ep-x').onclick = fechaModal;
   const tp = $('#ep-tpdf'); if (tp) tp.onclick = () => pdfTermos(S.termos[p.id]);
   const tr = $('#ep-tre'); if (tr) tr.onclick = async () => { const t = S.termos[p.id]; if (await confirma(`Apagar a assinatura atual de ${p.nome.split(' ')[0]}? Antes, baixe o PDF para arquivo. No próximo acesso o app pede para assinar de novo.`, 'Apagar e pedir de novo')) deleteDoc(doc(db, 'termos', t.id)).then(() => toast('Assinatura apagada. O app vai pedir de novo.'), e => toast(erroMsg(e))); };
+  const mx = $('#ep-mexe'); if (mx) mx.onchange = () => ['usuario', 'codigo'].forEach(n => { const el = $('#ep').elements[n]; el.readOnly = !mx.checked; if (!mx.checked) el.value = n === 'usuario' ? a.usuario : a.codigo; });
   let novaFoto = null;
   $('#ep-arq').onchange = async ev => {
     const f = ev.target.files[0]; if (!f) return; const fm = $('#ep-fmsg');
@@ -1723,7 +1727,7 @@ function editaPromotor(p) {
     const msg = t => { $('#ep-msg').innerHTML = t ? `<div class="note crit">${h(t)}</div>` : ''; };
     if (!v.nome) return msg('Informe o nome.');
     if (novo && S.promotores.some(x => x.id === id)) return msg('Já existe um promotor com esse nome.');
-    const mexeuAcesso = a ? (usuario !== a.usuario || codigo !== a.codigo) : !!(usuario || codigo);
+    const mexeuAcesso = a ? (!!($('#ep-mexe') && $('#ep-mexe').checked) && (usuario !== a.usuario || codigo !== a.codigo)) : !!(usuario || codigo);
     if (mexeuAcesso) {
       if (!usuario || !codigo) return msg('Para o acesso ao app, preencha o login e a senha.');
       if (!/^[a-z0-9]{3,20}$/.test(usuario)) return msg('O login deve ter de 3 a 20 letras minúsculas ou números, sem espaço nem acento.');
@@ -1818,7 +1822,8 @@ async function salvaAcesso(pid, a, usuario, codigo) {
   if (a && a.usuario === usuario) return gravaAcesso(pid, usuario, codigo, a.codigo); // só a senha mudou
   const uid = await criarAcessoPromotor(usuario, codigo, null); // login novo: cria a conta nova
   await setDoc(doc(db, 'usuarios', uid), { promotorId: pid, usuario });
-  await setDoc(doc(db, 'acessos', pid), { usuario, codigo, uid, atualizado: Date.now() });
+  await setDoc(doc(db, 'acessos', pid), { usuario, codigo, uid, atualizado: Date.now() }, { merge: true });
+  if (a && a.ultAtiv) await setDoc(doc(db, 'ativacoes', a.ultAtiv), { usuario, codigo }, { merge: true }).catch(() => {}); // o código fixo continua valendo: o celular se atualiza sozinho
   if (a) { // desliga o login antigo
     if (a.uid && a.uid !== uid) await deleteDoc(doc(db, 'usuarios', a.uid)).catch(() => {});
     await apagarContaPromotor(a.usuario, a.codigo);
@@ -1827,7 +1832,8 @@ async function salvaAcesso(pid, a, usuario, codigo) {
 async function gravaAcesso(pid, usuario, codigo, codigoAntigo) {
   const uid = await criarAcessoPromotor(usuario, codigo, codigoAntigo);
   await setDoc(doc(db, 'usuarios', uid), { promotorId: pid, usuario });
-  await setDoc(doc(db, 'acessos', pid), { usuario, codigo, uid, atualizado: Date.now() });
+  await setDoc(doc(db, 'acessos', pid), { usuario, codigo, uid, atualizado: Date.now() }, { merge: true });
+  const ua = (S.acessos[pid] || {}).ultAtiv; if (ua) await setDoc(doc(db, 'ativacoes', ua), { usuario, codigo }, { merge: true }).catch(() => {});
   return uid;
 }
 
