@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-12.1';
+const VERSAO_GESTAO = '2026-11-12.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -412,10 +412,12 @@ function escolhePdfDiretoria() {
     <label class="row" style="gap:8px"><input type="checkbox" id="pd-val" checked> ⏳ Validades (vermelho, amarelo e verde)</label>
     <label class="row" style="gap:8px"><input type="checkbox" id="pd-pq" checked> 💲 Pesquisa de preço</label>
     <label class="row" style="gap:8px"><input type="checkbox" id="pd-rup" checked> 🚫 Rupturas</label>
-    <label class="row" style="gap:8px"><input type="checkbox" id="pd-det" checked> Incluir as lojas de cada produto (detalhe)</label>
+    <div class="label" style="margin-top:6px">Detalhe por loja</div>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pd-det" checked> Lojas de cada produto em <b>Validades</b></label>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pd-det2"> Lojas de cada produto em <b>Preço</b> e <b>Rupturas</b> (deixa o PDF bem maior)</label>
     <div class="row end"><button class="btn" id="pd-c">Cancelar</button><button class="btn primary" id="pd-s">Gerar PDF</button></div>`);
   $('#pd-c').onclick = fechaModal;
-  $('#pd-s').onclick = () => { const o = { val: $('#pd-val').checked, pq: $('#pd-pq').checked, rup: $('#pd-rup').checked, det: $('#pd-det').checked, filtros }; if (!o.val && !o.pq && !o.rup) return toast('Marque pelo menos uma parte.'); fechaModal(); pdfDiretoria(o); };
+  $('#pd-s').onclick = () => { const o = { val: $('#pd-val').checked, pq: $('#pd-pq').checked, rup: $('#pd-rup').checked, det: $('#pd-det').checked, det2: $('#pd-det2').checked, filtros }; if (!o.val && !o.pq && !o.rup) return toast('Marque pelo menos uma parte.'); fechaModal(); pdfDiretoria(o); };
 }
 async function pdfDiretoria(o) {
   const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
@@ -488,12 +490,12 @@ async function pdfDiretoria(o) {
     const gmx = Math.max(1, ...G.map(g => g.mx));
     y = tab(y, ['Produto', 'Lojas', 'Menor', 'Média', 'Maior', 'Faixa de preço'], G.map(g => [nomeProd(g.p), g.rs.length, brl(g.mn), brl(g.md), brl(g.mx), '']), {
       columnStyles: { 1: { halign: 'center', cellWidth: 12 }, 2: { halign: 'right', cellWidth: 20 }, 3: { halign: 'right', cellWidth: 20 }, 4: { halign: 'right', cellWidth: 20 }, 5: { cellWidth: 38 } },
-      didParseCell: d => { if (d.section === 'body' && d.column.index === 2) d.cell.styles.textColor = VERD; if (d.section === 'body' && d.column.index === 4) d.cell.styles.textColor = VERM; if (d.section === 'body' && d.column.index === 3) d.cell.styles.fontStyle = 'bold'; },
+      didParseCell: d => { const g1 = G[d.row.index]; const varia = g1 && g1.rs.length > 1 && g1.mn !== g1.mx; if (d.section === 'body' && d.column.index === 2 && varia) d.cell.styles.textColor = VERD; if (d.section === 'body' && d.column.index === 4 && varia) d.cell.styles.textColor = VERM; if (d.section === 'body' && d.column.index === 3) d.cell.styles.fontStyle = 'bold'; },
       didDrawCell: d => { if (d.section !== 'body' || d.column.index !== 5) return; const g = G[d.row.index]; if (!g) return; const x0 = d.cell.x + 2, w = d.cell.width - 4, yy = d.cell.y + d.cell.height / 2;
         docp.setDrawColor(226, 228, 233); docp.setLineWidth(1.2); docp.line(x0, yy, x0 + w, yy);
         const a = x0 + w * g.mn / gmx, b = x0 + w * g.mx / gmx; docp.setDrawColor(...OURO); docp.setLineWidth(2.2); docp.line(a, yy, Math.max(b, a + 0.6), yy);
         docp.setFillColor(...INK); docp.circle(x0 + w * g.md / gmx, yy, 0.9, 'F'); } });
-    if (o.det) {
+    if (o.det2) {
       y = novaSe(y, 30); y = secao(y, 'Preço por loja', INK);
       const body = []; G.forEach(g => { body.push([{ content: nomeProd(g.p), colSpan: 4, styles: { fillColor: [255, 248, 225], fontStyle: 'bold' } }]);
         g.rs.slice().sort(alfaLoja).forEach(r => { const lj = lojaDe(r); body.push([`${lj.cod} · ${lj.nome}`, lj.cid, { content: brl(r.x.preco) + (g.rs.length > 1 && r.x.preco === g.mn ? '  menor' : g.rs.length > 1 && r.x.preco === g.mx ? '  maior' : ''), styles: { halign: 'right', fontStyle: 'bold', textColor: g.rs.length > 1 && r.x.preco === g.mn ? VERD : g.rs.length > 1 && r.x.preco === g.mx ? VERM : INK } }, `${promNome(r.v.promotorId).split(' ')[0]} · ${dataBR(r.d).slice(0, 5)}`]); }); });
@@ -510,7 +512,7 @@ async function pdfDiretoria(o) {
     const porLoja = new Map(); R.forEach(r => porLoja.set(r.v.lojaId, (porLoja.get(r.v.lojaId) || []).concat([r])));
     y = novaSe(y, 30); y = secao(y, 'Lojas com mais rupturas', VERM);
     y = tab(y, ['Loja', 'Cidade', 'Produtos em ruptura', 'Promotor'], [...porLoja.values()].sort((a, b) => b.length - a.length || alfaLoja(a[0], b[0])).map(rs => { const lj = lojaDe(rs[0]); return [`${lj.cod} · ${lj.nome}`, lj.cid, rs.length, promNome(rs[0].v.promotorId)]; }), { columnStyles: { 2: { halign: 'center', textColor: VERM, fontStyle: 'bold' } } });
-    if (o.det) { y = novaSe(y, 30); y = secao(y, 'Lojas em ruptura por produto', VERM);
+    if (o.det2) { y = novaSe(y, 30); y = secao(y, 'Lojas em ruptura por produto', VERM);
       const body = []; G.forEach(([p, rs]) => { body.push([{ content: `${nomeProd(p)}  ·  ${rs.length} loja${rs.length > 1 ? 's' : ''}`, colSpan: 3, styles: { fillColor: [253, 236, 236], fontStyle: 'bold', textColor: VERM } }]); rs.slice().sort(alfaLoja).forEach(r => { const lj = lojaDe(r); body.push([`${lj.cod} · ${lj.nome}`, lj.cid, `${promNome(r.v.promotorId).split(' ')[0]} · ${dataBR(r.d).slice(0, 5)}`]); }); });
       y = tab(y, ['Loja', 'Cidade', 'Pesquisa'], body); }
   }
