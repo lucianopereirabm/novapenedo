@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-12.1';
+export const VERSAO_APP = '2026-11-12.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -311,11 +311,13 @@ function grava(p, ehFoto) {
 }
 const msgSalvo = () => {}; // sem mensagens de confirmação: a tela já mostra o que foi feito (sem sinal, a faixa no topo avisa)
 // Leva o promotor direto ao próximo passo da visita: fotos obrigatórias → pesquisa de preço → check-out
-function proximoPasso() {
+function proximoPasso(origem) {
   setTimeout(() => {
     if (!S.visita) return; const v = S.vis[S.visita.id]; if (!v || v.status !== 'em_loja') return;
     const falta = ['antes', 'depois'].find(t => !S.fotos.some(x => x.tipo === t));
-    if (falta) { const b = document.querySelector(`[data-tirar="${falta}"]`); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    // quem está lançando a pesquisa continua nela (não sobe para as fotos): a foto "depois" normalmente fica para o fim
+    const pesqPendente = S.pesquisa.some(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
+    if (falta && !(origem === 'pq' && pesqPendente)) { const b = document.querySelector(`[data-tirar="${falta}"]`); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
     // pesquisa: continua do produto em que o promotor está (nunca volta para o topo da lista)
     const P = v.precos || {}; const resp = k => precoRespondido(P[chaveQ(S.pesquisa[k])]);
     const visivel = k => { const el = document.querySelector(`[data-pq="${k}"]`); return el && !el.closest('.pp-item[hidden]'); };
@@ -730,7 +732,7 @@ function salvaPreco(inp, avancar) {
   if (!isFinite(n) || n < 0 || n > 999) { toast('Preço inválido. Use o formato 7,99.'); inp.value = ''; return; }
   const val = Math.round(n * 100) / 100;
   if (!(atual && atual.preco === val)) atualiza({ precos: { [q]: Object.assign({}, atual && !atual.falta ? atual : {}, { preco: val, ts: Date.now() }) } });
-  if (avancar) proximoPasso();
+  if (avancar) proximoPasso('pq');
 }
 // validade: menos de 10 dias = amarelo; menos de 7 = vermelho
 const diasAte = d => Math.round((new Date(d + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5);
@@ -780,18 +782,18 @@ function renderPesquisa(v) {
     atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
     S.pqAtual = +inp.dataset.pv;
     if (val && diasAte(val) < 10) { toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}. Informe a quantidade a vender.`, 5000); setTimeout(() => { const w = document.querySelector(`[data-pqt="${inp.dataset.pv}"]`); if (w) w.closest('.pp-val').hidden = false; }, 100); }
-    proximoPasso();
+    proximoPasso('pq');
   });
   box.querySelectorAll('[data-pqt]').forEach(inp => inp.onchange = () => { // quantidade com essa validade na gôndola (a vender)
     if (!S.visita || !S.vis[S.visita.id]) return;
     const q = S.pesquisa[+inp.dataset.pqt]; const atual = (S.vis[S.visita.id].precos || {})[chaveQ(q)] || {};
     const n = inp.value === '' ? null : Math.max(0, Math.round(+inp.value)); if ((atual.qtd ?? null) === n) return;
     const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (n != null) novo.qtd = n; else delete novo.qtd;
-    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } }); S.pqAtual = +inp.dataset.pqt; proximoPasso();
+    atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } }); S.pqAtual = +inp.dataset.pqt; proximoPasso('pq');
   });
   box.querySelectorAll('[data-pf]').forEach(b => b.onclick = () => {
     S.pqAtual = +b.dataset.pf; const q = S.pesquisa[+b.dataset.pf]; const atual = ((S.vis[S.visita.id].precos || {})[chaveQ(q)] || {}).falta;
-    atualiza({ precos: { [q]: atual ? null : { falta: true, ts: Date.now() } } }); if (!atual) proximoPasso();
+    atualiza({ precos: { [q]: atual ? null : { falta: true, ts: Date.now() } } }); if (!atual) proximoPasso('pq');
   });
 }
 function renderCheck(v) {
