@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-11.13';
+const VERSAO_GESTAO = '2026-11-12.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -405,6 +405,121 @@ function renderMesPromotor(r, nomeMes) {
   box.querySelectorAll('[data-dd]').forEach(tr => tr.onclick = () => { P.modo = 'dia'; lsSet('np.p.modo', 'dia'); P.data = tr.dataset.dd; $('#p-data').value = P.data; P.sel = r.pid; box.dataset.modo = ''; assinaPainel(); renderPainel(); window.scrollTo(0, 0); });
 }
 
+/* ---------- PDF para a diretoria: pesquisa de preço, validades e rupturas (respeita os filtros) ---------- */
+function escolhePdfDiretoria() {
+  const f = VAL.f; const filtros = [f.loja && ('Loja: ' + lojaDe((VAL.todos || []).find(r => r.v.lojaId === f.loja) || { v: { lojaId: f.loja } }).nome), f.prom && ('Promotor: ' + promNome(f.prom)), f.prod && ('Produto: ' + f.prod)].filter(Boolean);
+  abreModal(`<h3>📄 Relatório para a diretoria</h3><p class="muted" style="margin:0;font-size:14px">Escolha o que entra no PDF. ${filtros.length ? 'Filtros aplicados: <b>' + h(filtros.join(' · ')) + '</b>.' : 'Todas as lojas e promotores.'}</p>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pd-val" checked> ⏳ Validades (vermelho, amarelo e verde)</label>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pd-pq" checked> 💲 Pesquisa de preço</label>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pd-rup" checked> 🚫 Rupturas</label>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pd-det" checked> Incluir as lojas de cada produto (detalhe)</label>
+    <div class="row end"><button class="btn" id="pd-c">Cancelar</button><button class="btn primary" id="pd-s">Gerar PDF</button></div>`);
+  $('#pd-c').onclick = fechaModal;
+  $('#pd-s').onclick = () => { const o = { val: $('#pd-val').checked, pq: $('#pd-pq').checked, rup: $('#pd-rup').checked, det: $('#pd-det').checked, filtros }; if (!o.val && !o.pq && !o.rup) return toast('Marque pelo menos uma parte.'); fechaModal(); pdfDiretoria(o); };
+}
+async function pdfDiretoria(o) {
+  const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
+  await carregaValidades();
+  const logo = await carregaImg(LOGO).catch(() => null);
+  const docp = new J({ unit: 'mm', format: 'a4' }); const W = 210, H = 297, M = 14;
+  const INK = [23, 25, 37], MUT = [92, 96, 112], OURO = [244, 188, 28], VERM = [192, 57, 43], AMAR = [184, 134, 0], VERD = [30, 122, 68], CINZA = [241, 242, 245];
+  const T = filtraPV(VAL.todos || []);
+  const grupo = L => { const g = new Map(); L.forEach(r => { if (!g.has(r.produto)) g.set(r.produto, []); g.get(r.produto).push(r); }); return [...g.entries()].sort((a, b) => alfaProd(a[0], b[0])); };
+  const lojasPesq = new Set(T.map(r => r.v.lojaId)).size;
+  const V = T.filter(r => r.x.val && !r.x.falta); const vR = V.filter(r => r.faltam < 7), vA = V.filter(r => r.faltam >= 7 && r.faltam < 10), vV = V.filter(r => r.faltam >= 10);
+  const P = T.filter(r => !r.x.falta && typeof r.x.preco === 'number'); const R = T.filter(r => r.x.falta);
+  const qt = L => L.reduce((s, r) => s + (+r.x.qtd || 0), 0);
+  const ini = new Date(); ini.setDate(ini.getDate() - VAL.dias + 1);
+  const periodo = `${ini.toLocaleDateString('pt-BR')} a ${new Date().toLocaleDateString('pt-BR')}`;
+  let pag = 0;
+  const cabecalho = (titulo, sub) => {
+    pag++; if (pag > 1) docp.addPage();
+    docp.setFillColor(...INK); docp.rect(0, 0, W, 26, 'F'); docp.setFillColor(...OURO); docp.rect(0, 26, W, 1.4, 'F');
+    if (logo) try { docp.addImage(logo, 'PNG', M, 6.5, 66, 12.7); } catch (e) {}
+    docp.setTextColor(255, 255, 255); docp.setFont(undefined, 'normal'); docp.setFontSize(8); docp.text('RELATÓRIO DE MERCADO · MERCHANDISING', W - M, 11, { align: 'right' });
+    docp.setFont(undefined, 'bold'); docp.setFontSize(12); docp.text(titulo, W - M, 18.5, { align: 'right' });
+    if (sub) { docp.setFont(undefined, 'normal'); docp.setFontSize(8.5); docp.setTextColor(...MUT); docp.text(sub, M, 33); }
+    return 37;
+  };
+  const secao = (y, txt, cor) => { docp.setFillColor(...cor); docp.rect(M, y, 3, 7, 'F'); docp.setTextColor(...cor); docp.setFont(undefined, 'bold'); docp.setFontSize(12.5); docp.text(txt, M + 6, y + 5.4); docp.setFont(undefined, 'normal'); return y + 11; };
+  const caixa = (x, y, w, hh, valor, rot, cor) => { docp.setFillColor(...CINZA); docp.roundedRect(x, y, w, hh, 2.5, 2.5, 'F'); docp.setFillColor(...cor); docp.rect(x, y + 3, 1.6, hh - 6, 'F');
+    docp.setTextColor(...cor); docp.setFont(undefined, 'bold'); docp.setFontSize(18); docp.text(String(valor), x + 5, y + 10.5); docp.setFont(undefined, 'normal'); docp.setFontSize(7.6); docp.setTextColor(...MUT); docp.text(docp.splitTextToSize(rot, w - 8), x + 5, y + 15.5); };
+  const tab = (y, head, body, opt) => { docp.autoTable(Object.assign({ startY: y, margin: { left: M, right: M, top: 32 }, head: [head], body,
+    styles: { fontSize: 8.2, cellPadding: 1.9, textColor: INK, lineColor: [226, 228, 233], lineWidth: 0.1 }, headStyles: { fillColor: INK, textColor: [255, 255, 255], fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 249, 251] }, didDrawPage: () => { if (docp.internal.getCurrentPageInfo().pageNumber > pag) { pag = docp.internal.getCurrentPageInfo().pageNumber; docp.setFillColor(...INK); docp.rect(0, 0, W, 12, 'F'); docp.setFillColor(...OURO); docp.rect(0, 12, W, 0.9, 'F'); docp.setTextColor(255, 255, 255); docp.setFontSize(8); docp.text('RELATÓRIO DE MERCADO · continuação', M, 8); } } }, opt || {})); return docp.lastAutoTable.finalY + 8; };
+  const novaSe = (y, precisa) => y + precisa > H - 18 ? cabecalho('Relatório de mercado (cont.)') : y;
+
+  // ---------- capa / resumo executivo ----------
+  let y = cabecalho('Resumo executivo', `Período: ${periodo} (última informação de cada loja e produto) · gerado em ${new Date().toLocaleString('pt-BR').slice(0, 16)}${o.filtros.length ? ' · ' + o.filtros.join(' · ') : ''}`);
+  docp.setTextColor(...INK); docp.setFont(undefined, 'bold'); docp.setFontSize(20); docp.text('Pesquisa de mercado nas lojas', M, y + 8); docp.setFont(undefined, 'normal');
+  docp.setFontSize(10); docp.setTextColor(...MUT); docp.text(`${lojasPesq} lojas pesquisadas pelos promotores · ${S.pesquisa.length} produtos na pesquisa`, M, y + 15);
+  y += 22; const bw = (W - 2 * M - 9) / 4;
+  caixa(M, y, bw, 22, lojasPesq, 'Lojas pesquisadas', INK); caixa(M + bw + 3, y, bw, 22, P.length, 'Preços de ponta lançados', INK);
+  caixa(M + 2 * (bw + 3), y, bw, 22, R.length, `Rupturas (${T.length ? Math.round(R.length / T.length * 100) : 0}% das verificações)`, VERM); caixa(M + 3 * (bw + 3), y, bw, 22, grupo(R).length, 'Produtos com alguma ruptura', VERM);
+  y += 26;
+  caixa(M, y, bw, 22, vR.length, `Validade < 7 dias${qt(vR) ? ' · ' + qt(vR) + ' un a vender' : ''}`, VERM); caixa(M + bw + 3, y, bw, 22, vA.length, `Validade 7 a 9 dias${qt(vA) ? ' · ' + qt(vA) + ' un' : ''}`, AMAR);
+  caixa(M + 2 * (bw + 3), y, bw, 22, vV.length, 'Validade 10 dias ou mais', VERD); caixa(M + 3 * (bw + 3), y, bw, 22, grupo(P).length, 'Produtos com preço pesquisado', INK);
+  y += 30;
+  // destaques automáticos
+  const dest = [];
+  if (vR.length) dest.push(`${vR.length} ocorrência(s) com validade abaixo de 7 dias em ${new Set(vR.map(r => r.v.lojaId)).size} loja(s)${qt(vR) ? `, somando ${qt(vR)} unidades a vender` : ''}. Prioridade: ação de giro/recolhimento.`);
+  const topR = grupo(R).sort((a, b) => b[1].length - a[1].length).slice(0, 3); if (topR.length) dest.push('Maiores rupturas: ' + topR.map(([p, rs]) => `${nomeProd(p)} (${rs.length} loja${rs.length > 1 ? 's' : ''})`).join('; ') + '.');
+  const disp = grupo(P).map(([p, rs]) => { const pr = rs.map(r => r.x.preco); return [p, Math.min(...pr), Math.max(...pr), rs.length]; }).filter(x => x[3] > 1 && x[1] > 0).sort((a, b) => (b[2] / b[1]) - (a[2] / a[1])).slice(0, 3);
+  if (disp.length) dest.push('Maior variação de preço entre lojas: ' + disp.map(([p, mn, mx]) => `${nomeProd(p)} (${brl(mn)} a ${brl(mx)})`).join('; ') + '.');
+  if (dest.length) { y = secao(y, 'Destaques', INK); docp.setFontSize(9.5); docp.setTextColor(...INK); dest.forEach(d => { const ls = docp.splitTextToSize('• ' + d, W - 2 * M); docp.text(ls, M, y); y += ls.length * 4.6 + 1.5; }); y += 3; }
+
+  // ---------- validades ----------
+  if (o.val) {
+    y = cabecalho('Validades', 'Validade mais próxima encontrada na gôndola · vermelho < 7 dias · amarelo 7 a 9 dias · verde 10 dias ou mais');
+    [[vR, 'Validade abaixo de 7 dias · data apertada', VERM, [253, 236, 236]], [vA, 'Validade de 7 a 9 dias', AMAR, [255, 246, 214]]].forEach(([L, t, cor, fundo]) => {
+      y = novaSe(y, 30); y = secao(y, `${t} (${grupo(L).length} produto${grupo(L).length === 1 ? '' : 's'})`, cor);
+      if (!L.length) { docp.setFontSize(9); docp.setTextColor(...MUT); docp.text('Nenhum produto nesta faixa.', M, y); y += 9; return; }
+      const body = []; grupo(L).forEach(([p, rs]) => { body.push([{ content: nomeProd(p) + `  ·  ${rs.length} loja${rs.length > 1 ? 's' : ''}${qt(rs) ? ' · ' + qt(rs) + ' un a vender' : ''}`, colSpan: 6, styles: { fillColor: fundo, fontStyle: 'bold', textColor: cor } }]);
+        if (o.det) rs.slice().sort((a, b) => a.faltam - b.faltam || alfaLoja(a, b)).forEach(r => { const lj = lojaDe(r); body.push([`${lj.cod} · ${lj.nome}`, lj.cid, dataBR(r.x.val), faltamTxt(r.faltam), r.x.qtd != null ? r.x.qtd + ' un' : '—', `${promNome(r.v.promotorId).split(' ')[0]} · ${dataBR(r.d).slice(0, 5)}`]); }); });
+      y = tab(y, ['Loja', 'Cidade', 'Validade', 'Prazo', 'Qtd a vender', 'Pesquisa'], body, { columnStyles: { 2: { halign: 'center' }, 4: { halign: 'right' } } });
+    });
+    y = novaSe(y, 30); y = secao(y, `Validade boa · 10 dias ou mais (${grupo(vV).length} produtos)`, VERD);
+    y = tab(y, ['Produto', 'Lojas', 'Validade mais próxima'], grupo(vV).map(([p, rs]) => [nomeProd(p), rs.length, dataBR(rs.map(r => r.x.val).sort()[0])]), { columnStyles: { 1: { halign: 'center' }, 2: { halign: 'center' } } });
+  }
+  // ---------- preços ----------
+  if (o.pq) {
+    y = cabecalho('Pesquisa de preço', 'Preço de ponta na gôndola · faixa entre o menor e o maior preço encontrado, com a média');
+    const G = grupo(P).map(([p, rs]) => { const pr = rs.map(r => r.x.preco); const mn = Math.min(...pr), mx = Math.max(...pr); return { p, rs, mn, mx, md: pr.reduce((s, x) => s + x, 0) / pr.length, lmn: rs.find(r => r.x.preco === mn), lmx: rs.find(r => r.x.preco === mx) }; });
+    const gmx = Math.max(1, ...G.map(g => g.mx));
+    y = tab(y, ['Produto', 'Lojas', 'Menor', 'Média', 'Maior', 'Faixa de preço'], G.map(g => [nomeProd(g.p), g.rs.length, brl(g.mn), brl(g.md), brl(g.mx), '']), {
+      columnStyles: { 1: { halign: 'center', cellWidth: 12 }, 2: { halign: 'right', cellWidth: 20 }, 3: { halign: 'right', cellWidth: 20 }, 4: { halign: 'right', cellWidth: 20 }, 5: { cellWidth: 38 } },
+      didParseCell: d => { if (d.section === 'body' && d.column.index === 2) d.cell.styles.textColor = VERD; if (d.section === 'body' && d.column.index === 4) d.cell.styles.textColor = VERM; if (d.section === 'body' && d.column.index === 3) d.cell.styles.fontStyle = 'bold'; },
+      didDrawCell: d => { if (d.section !== 'body' || d.column.index !== 5) return; const g = G[d.row.index]; if (!g) return; const x0 = d.cell.x + 2, w = d.cell.width - 4, yy = d.cell.y + d.cell.height / 2;
+        docp.setDrawColor(226, 228, 233); docp.setLineWidth(1.2); docp.line(x0, yy, x0 + w, yy);
+        const a = x0 + w * g.mn / gmx, b = x0 + w * g.mx / gmx; docp.setDrawColor(...OURO); docp.setLineWidth(2.2); docp.line(a, yy, Math.max(b, a + 0.6), yy);
+        docp.setFillColor(...INK); docp.circle(x0 + w * g.md / gmx, yy, 0.9, 'F'); } });
+    if (o.det) {
+      y = novaSe(y, 30); y = secao(y, 'Preço por loja', INK);
+      const body = []; G.forEach(g => { body.push([{ content: nomeProd(g.p), colSpan: 4, styles: { fillColor: [255, 248, 225], fontStyle: 'bold' } }]);
+        g.rs.slice().sort(alfaLoja).forEach(r => { const lj = lojaDe(r); body.push([`${lj.cod} · ${lj.nome}`, lj.cid, { content: brl(r.x.preco) + (g.rs.length > 1 && r.x.preco === g.mn ? '  menor' : g.rs.length > 1 && r.x.preco === g.mx ? '  maior' : ''), styles: { halign: 'right', fontStyle: 'bold', textColor: g.rs.length > 1 && r.x.preco === g.mn ? VERD : g.rs.length > 1 && r.x.preco === g.mx ? VERM : INK } }, `${promNome(r.v.promotorId).split(' ')[0]} · ${dataBR(r.d).slice(0, 5)}`]); }); });
+      y = tab(y, ['Loja', 'Cidade', 'Preço de ponta', 'Pesquisa'], body);
+    }
+  }
+  // ---------- rupturas ----------
+  if (o.rup) {
+    y = cabecalho('Rupturas', 'Produto em falta na gôndola nas lojas visitadas · % sobre as lojas pesquisadas no período');
+    const G = grupo(R);
+    y = tab(y, ['Produto', 'Lojas em ruptura', '% das lojas', 'Última pesquisa'], G.map(([p, rs]) => [nomeProd(p), rs.length, lojasPesq ? Math.round(rs.length / lojasPesq * 100) + '%' : '—', dataBR(rs.map(r => r.d).sort().pop())]), {
+      columnStyles: { 1: { halign: 'center', textColor: VERM, fontStyle: 'bold' }, 2: { halign: 'center' }, 3: { halign: 'center' } } });
+    // lojas com mais rupturas
+    const porLoja = new Map(); R.forEach(r => porLoja.set(r.v.lojaId, (porLoja.get(r.v.lojaId) || []).concat([r])));
+    y = novaSe(y, 30); y = secao(y, 'Lojas com mais rupturas', VERM);
+    y = tab(y, ['Loja', 'Cidade', 'Produtos em ruptura', 'Promotor'], [...porLoja.values()].sort((a, b) => b.length - a.length || alfaLoja(a[0], b[0])).map(rs => { const lj = lojaDe(rs[0]); return [`${lj.cod} · ${lj.nome}`, lj.cid, rs.length, promNome(rs[0].v.promotorId)]; }), { columnStyles: { 2: { halign: 'center', textColor: VERM, fontStyle: 'bold' } } });
+    if (o.det) { y = novaSe(y, 30); y = secao(y, 'Lojas em ruptura por produto', VERM);
+      const body = []; G.forEach(([p, rs]) => { body.push([{ content: `${nomeProd(p)}  ·  ${rs.length} loja${rs.length > 1 ? 's' : ''}`, colSpan: 3, styles: { fillColor: [253, 236, 236], fontStyle: 'bold', textColor: VERM } }]); rs.slice().sort(alfaLoja).forEach(r => { const lj = lojaDe(r); body.push([`${lj.cod} · ${lj.nome}`, lj.cid, `${promNome(r.v.promotorId).split(' ')[0]} · ${dataBR(r.d).slice(0, 5)}`]); }); });
+      y = tab(y, ['Loja', 'Cidade', 'Pesquisa'], body); }
+  }
+  // rodapé com numeração
+  const n = docp.internal.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { docp.setPage(i); docp.setDrawColor(226, 228, 233); docp.setLineWidth(0.2); docp.line(M, H - 11, W - M, H - 11); docp.setFontSize(7.5); docp.setTextColor(...MUT);
+    docp.text('Nova Penedo Distribuidora · Gestão de Rotas · informações coletadas pelos promotores no app', M, H - 6.5); docp.text(`Página ${i} de ${n}`, W - M, H - 6.5, { align: 'right' }); }
+  docp.save(`Relatorio de mercado ${dataHoje().split('-').reverse().join('-')}.pdf`);
+}
 /* ---------- Pesquisa de preço e validades (última informação de cada loja × produto) ---------- */
 const VAL = { dias: 21, cache: null, todos: null, em: 0, carregando: null, aba: lsGet('np.pv.aba') || 'val', f: { loja: '', prom: '', prod: '', so: '' } };
 const dataHoje = () => ymd(new Date());
@@ -441,7 +556,7 @@ async function renderVal(forca) {
   if (!c.dataset.ok) {
     c.dataset.ok = '1';
     c.innerHTML = `<div class="spread" style="flex-wrap:wrap"><div><h2>Pesquisa e validades</h2><div class="muted" style="font-size:13px">Última informação de cada loja e produto nos últimos ${VAL.dias} dias.</div></div>
-      <div class="row"><button class="btn sm" id="vl-csv">Baixar planilha</button><button class="btn sm" id="vl-at">Atualizar</button></div></div>
+      <div class="row"><button class="btn sm primary" id="vl-pdf">📄 PDF para a diretoria</button><button class="btn sm" id="vl-csv">Baixar planilha</button><button class="btn sm" id="vl-at">Atualizar</button></div></div>
       <div class="seg" id="vl-aba"><button data-a="val">⏳ Validades</button><button data-a="pq">💲 Pesquisa de preço</button><button data-a="rup">🚫 Rupturas</button></div>
       <div class="card row" style="gap:8px;flex-wrap:wrap;padding:10px" id="vl-f">
         <select id="vf-loja" style="flex:2;min-width:180px"></select><select id="vf-prom" style="flex:1;min-width:150px"></select>
@@ -449,6 +564,7 @@ async function renderVal(forca) {
         <select id="vf-so" style="flex:1;min-width:140px"></select><button class="btn sm ghost" id="vf-lim">Limpar</button></div>
       <div id="vl-c" class="muted">Carregando…</div>`;
     $('#vl-at').onclick = () => renderVal(true);
+    $('#vl-pdf').onclick = escolhePdfDiretoria;
     $('#vl-aba').querySelectorAll('[data-a]').forEach(b => b.onclick = () => { VAL.aba = b.dataset.a; VAL.f.so = ''; lsSet('np.pv.aba', VAL.aba); desenhaPV(); });
     $('#vf-loja').onchange = e => { VAL.f.loja = e.target.value; desenhaPV(); };
     $('#vf-prom').onchange = e => { VAL.f.prom = e.target.value; desenhaPV(); };
