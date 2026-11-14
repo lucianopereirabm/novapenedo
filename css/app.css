@@ -370,3 +370,8 @@ td.pv-clic:hover,tr.pv-clic:hover td{text-decoration:underline;text-decoration-c
 .pv-end{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:13.5px;line-height:1.5;display:grid;gap:2px}
 .pv-end a{font-weight:700;color:var(--brand-ink,#9A6B00)}
 #v-val .pv-corpo .pv-lista{grid-template-columns:1fr}
+
+/* pesquisa: o que já foi lançado some; fica só o que falta */
+#v-pp:not(.ver-todos) .pp-item.feito{display:none}
+#v-pp.ver-todos .pp-item.feito{opacity:.75;background:#F3FAF5}
+.pp-topo{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;margin-bottom:6px}

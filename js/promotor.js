@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
 
-export const VERSAO_APP = '2026-11-12.2';
+export const VERSAO_APP = '2026-11-14.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -738,6 +738,14 @@ function salvaPreco(inp, avancar) {
 const diasAte = d => Math.round((new Date(d + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5);
 const corVal = d => { if (!d) return ''; const n = diasAte(d); return n < 7 ? 'crit' : n < 10 ? 'warn' : 'ok'; };
 const txtVal = d => { if (!d) return ''; const n = diasAte(d); return n < 0 ? `vencido há ${-n} dia${n < -1 ? 's' : ''}` : n === 0 ? 'vence hoje' : `vence em ${n} dia${n > 1 ? 's' : ''}`; };
+// itens já respondidos somem da lista (ficam só os que faltam); "Ver lançados" mostra todos para conferir ou corrigir
+function marcaFeitos(box, resp) {
+  let ok = 0; S.pesquisa.forEach((q, i) => { const it = box.querySelector(`[data-pq="${i}"]`); const f = precoRespondido(resp[chaveQ(q)]); if (f) ok++; if (it) it.closest('.pp-item').classList.toggle('feito', f); });
+  const falta = S.pesquisa.length - ok; const t = box.querySelector('#pp-topo');
+  if (t) t.innerHTML = falta ? `<span><b>Faltam ${falta}</b> de ${S.pesquisa.length}</span>${ok ? `<button class="btn sm ghost" id="pp-ver" type="button">${box.classList.contains('ver-todos') ? 'Esconder lançados' : `Ver lançados (${ok})`}</button>` : ''}`
+    : `<span style="color:var(--ok)"><b>✅ Pesquisa completa</b> · ${ok} itens</span><button class="btn sm ghost" id="pp-ver" type="button">${box.classList.contains('ver-todos') ? 'Esconder lançados' : 'Ver / corrigir'}</button>`;
+  const b = box.querySelector('#pp-ver'); if (b) b.onclick = () => { box.classList.toggle('ver-todos'); marcaFeitos(box, (S.vis[S.visita.id] || {}).precos || {}); };
+}
 function renderPesquisa(v) {
   const box = $('#v-pp');
   { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)])).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
@@ -750,19 +758,21 @@ function renderPesquisa(v) {
       inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode;
       const qt = box.querySelector(`[data-pqt="${i}"]`); if (qt) { if (document.activeElement !== qt) qt.value = x.qtd != null ? x.qtd : ''; qt.disabled = !pode || !!x.falta; qt.closest('.pp-val').classList.toggle('off', !!x.falta); qt.closest('.pp-val').hidden = !precisaQtd(x); }
       const vd = box.querySelector(`[data-pv="${i}"]`); if (vd) { if (document.activeElement !== vd) vd.value = x.val || ''; vd.disabled = !pode || !!x.falta; const w = vd.closest('.pp-val'); w.className = 'pp-val ' + corVal(x.val) + (x.falta ? ' off' : ''); w.querySelector('small').textContent = txtVal(x.val); } });
+    marcaFeitos(box, resp);
     return;
   }
-  box.dataset.k = chave;
-  box.innerHTML = S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
+  box.dataset.k = chave; box.classList.remove('ver-todos');
+  box.innerHTML = '<div class="pp-topo" id="pp-topo"></div>' + S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
       <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
       <label class="pp-val ${corVal(x.val)}${x.falta ? ' off' : ''}"><span>Validade</span><input type="date" data-pv="${i}" value="${h(x.val || '')}" ${!pode || x.falta ? 'disabled' : ''}><small>${txtVal(x.val)}</small></label>
       <label class="pp-val pp-qtd${x.falta ? ' off' : ''}" ${precisaQtd(x) ? '' : 'hidden'}><span>Qtd a vender *</span><input type="number" inputmode="numeric" min="0" step="1" data-pqt="${i}" value="${x.qtd != null ? x.qtd : ''}" placeholder="un" ${!pode || x.falta ? 'disabled' : ''}><small></small></label>
       <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Ruptura</button></div></div>`; }).join('');
   if (S.pesquisa.length > 8) { // lista grande: campo para achar o produto
-    box.insertAdjacentHTML('afterbegin', `<input type="search" id="pp-busca" placeholder="Buscar produto (nome ou código)" autocomplete="off" style="margin-bottom:6px">`);
+    box.querySelector('#pp-topo').insertAdjacentHTML('afterend', `<input type="search" id="pp-busca" placeholder="Buscar produto (nome ou código)" autocomplete="off" style="margin-bottom:6px">`);
     $('#pp-busca').oninput = e => { const t = semAcento(e.target.value.trim()); box.querySelectorAll('.pp-item').forEach(it => { it.hidden = !!t && !semAcento(it.querySelector('.pp-nome').textContent).includes(t); }); };
   }
+  marcaFeitos(box, resp);
   const ok = S.pesquisa.filter(q => precoRespondido(resp[chaveQ(q)])).length;
   $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`;
   box.querySelectorAll('[data-pq]').forEach(inp => {
