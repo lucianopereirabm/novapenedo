@@ -129,6 +129,17 @@ tr.click:hover td{background:var(--sunk)}
 .login{max-width:420px;margin:24px auto;display:flex;flex-direction:column;gap:14px}
 .login .logo{background:var(--brand-n);border-radius:16px;padding:20px;text-align:center}
 .login .logo img{max-width:240px}
+.login .logo{display:flex;flex-direction:column;align-items:center;gap:6px}
+.login .logo img.marca-pt{width:min(260px,80%);max-width:none;height:auto}
+.login .logo img.np{max-width:140px}
+.login .logo small{color:#9a9eb0;font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:600}
+/* marca: promotor.tec em parceria com a Nova Penedo */
+.brand.dupla{flex-direction:row;align-items:center;gap:10px}
+.brand.dupla img.marca-pt{height:38px;width:auto}
+.brand.dupla .parc{display:flex;flex-direction:column;gap:3px;padding-left:10px;border-left:1px solid rgba(255,255,255,.18)}
+.brand.dupla .parc small{font-size:8.5px;letter-spacing:.12em;color:#9a9eb0;text-transform:uppercase;font-weight:600;white-space:nowrap}
+.brand.dupla .parc img{height:15px}
+@media (max-width:380px){.brand.dupla img.marca-pt{height:32px}.brand.dupla .parc img{height:12px}.brand.dupla .parc small{font-size:7.5px}}
 #mapa{height:420px;border-radius:var(--r);border:1px solid var(--line);z-index:1}
 /* Gestão: menu lateral no computador */
 .shell{display:block}
