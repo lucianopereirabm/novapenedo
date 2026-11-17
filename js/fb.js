@@ -123,7 +123,7 @@ export function abreModal(html) {
 export function fechaModal() { const m = $('#modal'); if (m) { m.hidden = true; $('#modal-box').innerHTML = ''; } }
 export function confirma(texto, botao) {
   return new Promise(res => {
-    abreModal(`<h3>${h(texto)}</h3><div class="row end"><button class="btn" id="cf-n">Cancelar</button><button class="btn primary" id="cf-s">${h(botao)}</button></div>`);
+    abreModal(`<h3 style="white-space:pre-line">${h(texto)}</h3><div class="row end"><button class="btn" id="cf-n">Cancelar</button><button class="btn primary" id="cf-s">${h(botao)}</button></div>`);
     $('#cf-n').onclick = () => { fechaModal(); res(false); };
     $('#cf-s').onclick = () => { fechaModal(); res(true); };
   });

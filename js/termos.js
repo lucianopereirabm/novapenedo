@@ -89,3 +89,29 @@ export async function infoAparelho() {
   const nav = (ua.match(/SamsungBrowser\/[\d.]+|EdgA?\/[\d.]+|CriOS\/[\d.]+|Chrome\/[\d.]+|Firefox\/[\d.]+|Version\/[\d.]+ Mobile.*Safari/) || [''])[0].replace(/\/.*Safari/, ' Safari');
   return { modelo, sistema, navegador: nav, tela: `${screen.width}x${screen.height}`, id, userAgent: ua };
 }
+
+// Termo do intervalo de almoço (escolha de 30 min ou 1 hora). Ao mudar o texto, mude a versão: todos assinam de novo.
+export const VERSAO_ALMOCO = 'almoco-2026-11-v1';
+export function termoAlmoco(c) {
+  const meia = +c.opcao === 30;
+  return `TERMO DE OPÇÃO E COMPROMISSO DO INTERVALO PARA REFEIÇÃO E DESCANSO (ALMOÇO)
+
+Empresa: ${linha(c.empresa)}${c.cnpj ? ', CNPJ ' + c.cnpj : ''}.
+Promotor(a): ${linha(c.nome)}.
+
+1. OPÇÃO
+Declaro que opto por um intervalo de almoço de ${c.opcao ? (meia ? '30 (TRINTA) MINUTOS' : '1 (UMA) HORA') : '________'} por dia de trabalho${meia ? ', conforme a redução do intervalo admitida pelo art. 611-A, III, da CLT, nos termos da norma coletiva aplicável' : ', conforme o art. 71 da CLT'}.
+
+2. HORÁRIO
+a) O almoço é obrigatório nos dias de jornada acima de 6 horas e deve ser tirado de forma corrida, sem trabalhar nesse período.
+b) O início do almoço só pode ser marcado a partir das ${linha(c.ini, '11:00')}, e o almoço deve terminar no máximo às ${linha(c.fim, '13:00')}.
+c) Marco no aplicativo o INÍCIO e o FIM do almoço. Durante o almoço o aplicativo fica bloqueado e nenhuma atividade é permitida.
+d) O aplicativo não permite encerrar o almoço antes de completar ${meia ? '30 minutos' : '1 hora'}. Se eu passar desse tempo, encerro assim que voltar, e o tempo a mais é registrado.
+e) Se eu não marcar o início até o último horário possível, o aplicativo trava e exige a marcação do almoço, que fica registrada como fora do horário.
+
+3. REGISTRO
+Os horários marcados ficam gravados com data, hora e o aparelho usado, e servem para o cálculo da jornada e do banco de horas. A marcação é pessoal: declaro que eu mesmo(a) farei as marcações.
+
+4. ALTERAÇÃO
+Para mudar a opção (30 minutos ou 1 hora), devo pedir ao supervisor, que libera a assinatura de um novo termo.`;
+}

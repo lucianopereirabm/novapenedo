@@ -6,10 +6,10 @@ import {
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
 } from './fb.js';
 import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.js';
-import { VERSAO } from './termos.js';
-import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO } from './jornada.js';
+import { VERSAO, VERSAO_ALMOCO } from './termos.js';
+import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO, problemaAlmoco } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-12.3';
+const VERSAO_GESTAO = '2026-11-17.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -53,7 +53,7 @@ function iniciar() {
   escuta(collection(db, 'promotores'), s => { S.promotores = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.nome.localeCompare(b.nome)); S.pronto.p = true; render(); }, e => toast(erroMsg(e)));
   escuta(collection(db, 'lojas'), s => { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); S.pronto.l = true; render(); }, e => toast(erroMsg(e)));
   escuta(collection(db, 'rostos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.rostos = m; S.erroRostos = ''; S.qtdRostos = s.size; if (['equipe', 'painel'].includes(S.tab)) render(); }, e => { S.erroRostos = (e && (e.code || e.message)) || 'erro'; if (S.tab === 'equipe') render(); });
-  if (!S.leitura) escuta(collection(db, 'termos'), s => { const m = {}; s.docs.forEach(d => { const x = d.data(); if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; if (S.tab === 'equipe') render(); }, () => {});
+  if (!S.leitura) escuta(collection(db, 'termos'), s => { const m = {}, ma = {}; s.docs.forEach(d => { const x = d.data(); if (x.tipo === 'almoco') { if (x.versao === VERSAO_ALMOCO) ma[x.promotorId] = Object.assign({ id: d.id }, x); return; } if (!m[x.promotorId] || x.assinadoEm > m[x.promotorId].assinadoEm) m[x.promotorId] = Object.assign({ id: d.id }, x); }); S.termos = m; S.termosAlm = ma; if (S.tab === 'equipe') render(); }, () => {});
   escuta(collection(db, 'aparelhos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.aparelhos = m; S.erroAparelhos = ''; if (S.tab === 'equipe') render(); }, e => { S.erroAparelhos = (e && e.code) || 'erro'; if (S.tab === 'equipe') render(); });
   if (!S.leitura) escuta(collection(db, 'leitores'), s => { S.leitores = s.docs.map(d => ({ id: d.id, ...d.data() })); if (S.tab === 'equipe') render(); }, () => {});
   if (!S.leitura) escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
@@ -280,7 +280,7 @@ function ultimoEvento(d) {
     else { if (v.checkin) ev.push({ t: v.checkin, html: `<span class="ic-ev live">➜</span> Check-in em <b>${n}</b> às ${hm(v.checkin)}${rostoRuim(v) ? ' · <span style="color:var(--crit)">rosto ≠</span>' : ''}${foraLoja(v) ? ` · <span style="color:var(--crit)">⚠️ fora da loja (${v.distIn} m)</span>` : ''}` });
       if (v.checkout) ev.push({ t: v.checkout, html: `<span class="ic-ev ok">✓</span> Check-out em <b>${n}</b> às ${hm(v.checkout)} · ${dur(v.checkin, v.checkout)}` }); } });
   const jr = (P.jor || {})[d.pid];
-  if (jr && jr.almocoInicio) ev.push({ t: jr.almocoInicio, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Saiu para o almoço às ${hm(jr.almocoInicio)}` });
+  if (jr && jr.almocoInicio) ev.push({ t: jr.almocoInicio, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Saiu para o almoço às ${hm(jr.almocoInicio)}${jr.almocoOpcao ? ` (termo: ${jr.almocoOpcao === 30 ? '30 min' : '1h'})` : ''}${jr.almocoAtrasado ? ' <b style="color:var(--crit)">fora do horário</b>' : ''}` });
   if (jr && jr.almocoFim) ev.push({ t: jr.almocoFim, html: `<span class="ic-ev" style="background:#2F80ED">🍽</span> Voltou do almoço às ${hm(jr.almocoFim)} · ${hmin((jr.almocoFim - jr.almocoInicio) / 60000)}` });
   if (!ev.length) return '<span class="muted">Aguardando o primeiro check-in</span>';
   return ev.sort((a, b) => b.t - a.t)[0].html;
@@ -383,7 +383,7 @@ async function renderMes() {
       <td class="r"><b style="color:${r.saldo < 0 ? 'var(--crit)' : 'var(--ok)'}">${saldoTxt(r.saldo)}</b>${r.andamento ? `<div class="muted" style="font-size:11px">+ hoje ${hmin(r.andamento.trabalhado)} em andamento</div>` : ''}</td>
       <td class="r">${r.feitas}/${r.prog} <span class="muted">${r.prog ? Math.round(r.feitas / r.prog * 100) : 0}%</span></td><td class="r">${r.nao || '—'}</td><td class="r" style="color:${r.semVisita ? 'var(--crit)' : 'inherit'}">${r.semVisita || '—'}</td><td class="r">${r.fora || '—'}</td><td class="r" style="color:${r.alertas ? 'var(--crit)' : 'inherit'}">${r.alertas || '—'}</td></tr>`).join('')}
     </tbody></table></div></div>
-    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos o almoço automático das ${(regrasJornada(S.empresa).almocoFixo || {}).ini || '12:00'} às ${(regrasJornada(S.empresa).almocoFixo || {}).fim || '13:00'}; antes de 10/11, 1h nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). Em loja = do check-in ao check-out de cada loja (sem o almoço marcado); Deslocamento = o restante da jornada, entre uma loja e outra. Jornada = do check-in da primeira loja ao check-out da última. O dia de hoje entra no saldo quando o promotor sai da última loja. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div class="muted" style="font-size:12px">Banco de horas: horas trabalhadas (do início ao fim da jornada, menos o almoço: a partir de 18/11, o almoço marcado pelo promotor no app (termo de 30 min ou 1h, entre ${(regrasJornada(S.empresa).almocoJanela || {}).ini || '11:00'} e ${(regrasJornada(S.empresa).almocoJanela || {}).fim || '13:00'}; sem marcação, 1h nos dias acima de 6h); de 10/11 a 17/11, o almoço automático das 12:00 às 13:00; antes de 10/11, 1h nos dias acima de 6h) menos a carga prevista do dia (${hmin(regrasJornada(S.empresa).carga[1])} seg–sex, ${hmin(regrasJornada(S.empresa).carga[6])} sáb). Em loja = do check-in ao check-out de cada loja (sem o almoço marcado); Deslocamento = o restante da jornada, entre uma loja e outra. Jornada = do check-in da primeira loja ao check-out da última. O dia de hoje entra no saldo quando o promotor sai da última loja. "Sem registro" = loja da rota de um dia que já passou sem check-in nem motivo. Dados lidos às ${new Date(D.em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.</div>
     <button class="btn sm" id="m-csv">Baixar planilha do mês</button></div>`;
   box.querySelectorAll('[data-pm]').forEach(tr => tr.onclick = () => { P.selMes = tr.dataset.pm; renderPainel(); });
   $('#m-csv').onclick = () => csvMes(RS, nomeMes);
@@ -837,7 +837,7 @@ function renderDetalhe(d) {
       <div class="muted" style="font-size:12px">Mapa: números = ordem da rota do dia (verde concluída, laranja em loja, branco pendente, vermelho não visitada ou com alerta); tracejado = rota planejada; linha verde = caminho feito pelos check-ins (pontinhos). Lojas com ponto aproximado (pelo endereço) aparecem com borda tracejada. Clique numa loja da lista para ver fotos e GPS.</div></div>`;
   }
   $('#p-dhead').innerHTML = `<div class="spread" style="flex-wrap:wrap;gap:10px"><div class="row" style="gap:12px;flex-wrap:nowrap;min-width:0;max-width:100%"><button class="btn sm" id="p-volta">‹ Todos</button>${avatar(d.pid, 52)}<div style="min-width:0"><h3 style="font-size:20px;margin:0">${h(promNome(d.pid))}</h3>
-      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div><div class="muted num" style="font-size:13px;margin-top:2px">${jornadaTxt(d.J)}${d.J.tem && d.J.almocoMarcado ? ` · almoço ${hm(d.J.almocoIni)}–${d.J.almocoFim ? hm(d.J.almocoFim) : 'agora'} (${hmin(((d.J.almocoFim || Date.now()) - d.J.almocoIni) / 60000)})${d.J.almocoFim && (d.J.almocoFim - d.J.almocoIni) < 3600000 && d.J.bruto > 360 ? ' <span style="color:var(--crit)">menos de 1h</span>' : ''}` : d.J.tem && d.J.almoco ? ' · almoço não marcado: 1h descontada' : ''}${d.J.fimEst ? ' · * ficou sem check-out na última loja; contado até a última entrada' : ''}</div></div></div>
+      <div class="muted num" style="font-size:13px">${d.feitas} de ${d.programadas} visitas${d.extras ? ` · +${d.extras} fora da rota` : ''} · início ${hm(d.primeira)} · última saída ${hm(d.ultimaSaida)} · ${d.tempo ? dur(1, 1 + d.tempo) : '0 min'} em loja</div><div style="font-size:13px;margin-top:2px">${statusTexto(d)}</div><div class="muted num" style="font-size:13px;margin-top:2px">${jornadaTxt(d.J)}${d.J.tem && d.J.almocoMarcado ? ` · almoço ${hm(d.J.almocoIni)}–${d.J.almocoFim ? hm(d.J.almocoFim) : 'agora'} (${hmin(((d.J.almocoFim || Date.now()) - d.J.almocoIni) / 60000)})${(() => { const pb = problemaAlmoco(regrasJornada(S.empresa), P.data, { almocoInicio: d.J.almocoIni, almocoFim: d.J.almocoFim, almocoOpcao: d.J.almocoOpcao }); return pb ? ` <span style="color:var(--crit)">⚠ ${h(pb)}</span>` : d.J.almocoFim && !d.J.almocoOpcao && (d.J.almocoFim - d.J.almocoIni) < 3600000 && d.J.bruto > 360 ? ' <span style="color:var(--crit)">menos de 1h</span>' : ''; })()}` : d.J.tem && d.J.almoco ? ' · almoço não marcado: 1h descontada' : ''}${d.J.fimEst ? ' · * ficou sem check-out na última loja; contado até a última entrada' : ''}</div></div></div>
       <select id="p-outro" style="width:auto">${S.promotores.filter(p => p.ativo !== false).map(p => `<option value="${h(p.id)}" ${p.id === d.pid ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select></div>`;
   $('#p-dest').innerHTML = estrada(d);
   { const hoje = P.data === ymd(new Date()); const a = $('#p-daviso');
@@ -1640,7 +1640,7 @@ function renderEquipe() {
     ${lista.length ? '' : `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">Nenhum promotor ${filtro === 'inativos' ? 'inativo' : 'ativo'}.</td></tr>`}
     ${lista.map(p => { const a = S.acessos[p.id]; return `<tr><td><div class="row" style="gap:10px;flex-wrap:nowrap">${avatar(p.id, 52)}<div><b>${h(p.nome)}</b>${p.ativo === false ? ' <span class="tag no">inativo</span>' : ''}${S.rostos[p.id] ? '' : ' <span class="tag y">sem foto</span>'}</div></div><div class="muted" style="font-size:12px">${h(p.base || '')}${p.inicioApp ? ` · ${p.inicioApp > ymd(new Date()) ? '<span class="tag y">em teste</span> app a partir de' : 'app desde'} ${dataBR(p.inicioApp)}` : ''}</div></td>
       <td style="font-size:13px;white-space:normal;min-width:240px">${p.telefone ? `📞 ${h(p.telefone)}` : '<span class="muted">sem telefone</span>'}${p.email ? `<div class="muted">✉ ${h(p.email)}</div>` : ''}${p.endereco || p.cidadeRes ? `<div class="muted">🏠 ${h([p.endereco, [p.cidadeRes, p.ufRes].filter(Boolean).join('/'), p.cepRes].filter(Boolean).join(' · '))}</div>` : '<div class="muted">sem endereço</div>'}</td><td class="num">${S.lojas.filter(l => l.promotorId === p.id).length}</td>
-      <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}</td>
+      <td>${a ? `<b>${h(a.usuario)}</b>` : '<span class="tag y">sem acesso</span>'}</td><td class="num">${a ? h(a.codigo) : '—'}</td><td>${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<button class="btn sm ghost" data-tm="${h(p.id)}" title="Baixar PDF dos termos">✓ ${new Date(S.termos[p.id].assinadoEm).toLocaleDateString('pt-BR')}</button>` : '<span class="tag y">pendente</span>'}<div style="margin-top:4px">${(S.termosAlm || {})[p.id] ? `<button class="btn sm ghost" data-tma="${h(p.id)}" title="Baixar PDF do termo do almoço">🍽️ ${+S.termosAlm[p.id].opcao === 30 ? '30 min' : '1 hora'}</button>` : '<span class="tag y">🍽️ almoço pendente</span>'}</div></td>
       <td class="r"><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">${a ? celularCel(p) : ''}<button class="btn sm" data-ed="${h(p.id)}">${a ? 'Editar' : 'Editar e criar acesso'}</button></div></td></tr>`; }).join('')}
     </tbody></table></div></div>
     <div class="card stack"><div class="spread"><h3>Gestores só de monitoramento</h3><span class="muted" style="font-size:12px">Veem só a Torre de controle. Não alteram nada.</span></div>
@@ -1666,6 +1666,7 @@ function renderEquipe() {
   c.querySelectorAll('[data-at]').forEach(b => b.onclick = () => ativarCelular(S.promotores.find(p => p.id === b.dataset.at)));
   c.querySelectorAll('[data-dv]').forEach(b => b.onclick = () => desvincularCelular(S.promotores.find(p => p.id === b.dataset.dv)));
   c.querySelectorAll('[data-tm]').forEach(b => b.onclick = () => pdfTermos(S.termos[b.dataset.tm]));
+  c.querySelectorAll('[data-tma]').forEach(b => b.onclick = () => pdfTermoAlmoco(S.termosAlm[b.dataset.tma]));
   c.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => editaPromotor(S.promotores.find(p => p.id === b.dataset.ed)));
 }
 function sugereUsuario(nome, pid) { const base = usuarioDeNome(nome) || 'promotor'; let u = base, n = 2; while (Object.entries(S.acessos).some(([k, x]) => x.usuario === u && k !== pid)) u = base + n++; return u; }
@@ -1698,8 +1699,11 @@ function editaPromotor(p) {
     <label class="field"><span>Usuário de teste: usa a rota de (só simulação; não mexe no promotor escolhido, não conta banco de horas nem variável)</span><select name="espelhoDe"><option value="">— Não é usuário de teste —</option>${S.promotores.filter(x => x.id !== p.id && !x.espelhoDe && x.ativo !== false).map(x => `<option value="${h(x.id)}" ${p.espelhoDe === x.id ? 'selected' : ''}>${h(x.nome)}</option>`).join('')}</select></label>
     <label class="field"><span>Situação</span><select name="ativo"><option value="1" ${p.ativo !== false ? 'selected' : ''}>Ativo</option><option value="" ${p.ativo === false ? 'selected' : ''}>Inativo (não aparece nas rotas e não entra no app)</option></select></label>
     ${!novo ? `<div class="note ${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? 'ok' : 'warn'}" style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">${S.termos[p.id] && S.termos[p.id].versao === VERSAO ? `<span>Termos LGPD e do aparelho assinados em ${new Date(S.termos[p.id].assinadoEm).toLocaleString('pt-BR')}</span><span class="row" style="gap:6px"><button type="button" class="btn sm" id="ep-tpdf">Baixar PDF</button><button type="button" class="btn sm ghost danger" id="ep-tre">Pedir nova assinatura</button></span>` : '<span>Termos ainda não assinados. O app pede a assinatura no primeiro acesso do promotor.</span>'}</div>` : ''}
+    ${!novo ? (() => { const ta = (S.termosAlm || {})[p.id]; return `<div class="note ${ta ? 'ok' : 'warn'}" style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">${ta ? `<span>🍽️ Termo do almoço: <b>${+ta.opcao === 30 ? '30 minutos' : '1 hora'}</b>, assinado em ${new Date(ta.assinadoEm).toLocaleString('pt-BR')}</span><span class="row" style="gap:6px"><button type="button" class="btn sm" id="ep-apdf">Baixar PDF</button><button type="button" class="btn sm ghost danger" id="ep-are">Trocar opção (nova assinatura)</button></span>` : '<span>🍽️ Termo do almoço ainda não assinado. O app pede a assinatura na próxima vez que o promotor abrir.</span>'}</div>`; })() : ''}
     <div id="ep-msg"></div>
     <div class="row end"><button class="btn primary" type="submit" id="ep-s">Salvar</button></div></form>`);
+  const ap = $('#ep-apdf'); if (ap) ap.onclick = () => pdfTermoAlmoco(S.termosAlm[p.id]);
+  const ar = $('#ep-are'); if (ar) ar.onclick = async () => { const t = S.termosAlm[p.id]; if (await confirma(`Apagar o termo do almoço de ${p.nome.split(' ')[0]} para ele(a) escolher de novo (30 min ou 1h)? Antes, baixe o PDF para arquivo. O app pede a nova assinatura na hora.`, 'Apagar e pedir de novo')) deleteDoc(doc(db, 'termos', t.id)).then(() => toast('Termo do almoço apagado. O app vai pedir de novo.'), e => toast(erroMsg(e))); };
   $('#ep-x').onclick = fechaModal;
   const tp = $('#ep-tpdf'); if (tp) tp.onclick = () => pdfTermos(S.termos[p.id]);
   const tr = $('#ep-tre'); if (tr) tr.onclick = async () => { const t = S.termos[p.id]; if (await confirma(`Apagar a assinatura atual de ${p.nome.split(' ')[0]}? Antes, baixe o PDF para arquivo. No próximo acesso o app pede para assinar de novo.`, 'Apagar e pedir de novo')) deleteDoc(doc(db, 'termos', t.id)).then(() => toast('Assinatura apagada. O app vai pedir de novo.'), e => toast(erroMsg(e))); };
@@ -1865,6 +1869,29 @@ async function pdfTermos(t) {
   d.save(`Termos ${t.nome.split(' ')[0]} ${new Date(t.assinadoEm).toISOString().slice(0, 10)}.pdf`);
 }
 
+// PDF do termo do almoço
+async function pdfTermoAlmoco(t) {
+  if (!t) return; const J = window.jspdf && window.jspdf.jsPDF; if (!J) return toast('O gerador de PDF ainda está carregando. Tente de novo em alguns segundos.');
+  const logo = await carregaImg(LOGO).catch(() => null);
+  const d = new J({ unit: 'mm', format: 'a4' }); const W = 210, M = 16; let y = 0;
+  const topo = () => { d.setFillColor(23, 25, 37); d.rect(0, 0, W, 22, 'F'); d.setFillColor(244, 188, 28); d.rect(0, 22, W, 1.4, 'F'); if (logo) try { d.addImage(logo, 'PNG', M, 5, 62, 11.9); } catch (e) {} d.setTextColor(255, 255, 255); d.setFontSize(8.5); d.text('TERMO DO ALMOÇO · versão ' + t.versao, W - M, 13.5, { align: 'right' }); d.setTextColor(23, 25, 37); y = 32; };
+  const texto = (tx, tam = 9.6) => { tx.split('\n').forEach((par, i) => { const negrito = i === 0 || /^\d+\. [^a-z]+$/.test(par.trim()); d.setFontSize(tam); d.setFont(undefined, negrito ? 'bold' : 'normal'); d.splitTextToSize(par || ' ', W - 2 * M).forEach(l => { if (y > 280) { d.addPage(); topo(); } d.text(l, M, y); y += tam * 0.47; }); }); };
+  topo(); texto(t.texto); y += 4; d.setFontSize(9.6); d.setFont(undefined, 'bold'); d.text('[X] Li e concordo com este termo.', M, y); y += 10;
+  if (y > 200) { d.addPage(); topo(); }
+  d.setFillColor(241, 242, 245); d.roundedRect(M, y, W - 2 * M, 62, 2, 2, 'F'); const y0 = y + 7;
+  d.setFont(undefined, 'bold'); d.setFontSize(11); d.text('REGISTRO DA ASSINATURA ELETRÔNICA', M + 4, y0);
+  if (t.selfie) try { const ip = d.getImageProperties(t.selfie); let w = 40, hh = w * ip.height / ip.width; if (hh > 52) { hh = 52; w = hh * ip.width / ip.height; } d.addImage(t.selfie, 'JPEG', W - M - 4 - w, y0 - 3, w, hh); } catch (e) {}
+  const A = t.aparelho || {}; const rec = t.recebido && t.recebido.toMillis ? new Date(t.recebido.toMillis()).toLocaleString('pt-BR') : '—';
+  const L = [['Assinado por', t.nome], ['Opção escolhida', +t.opcao === 30 ? '30 minutos de almoço' : '1 hora de almoço'], ['Data e hora no celular', new Date(t.assinadoEm).toLocaleString('pt-BR')], ['Recebido no sistema', rec],
+    ['Localização', t.gps ? `${t.gps.lat.toFixed(6)}, ${t.gps.lng.toFixed(6)} (precisão ${t.gps.prec} m)` : 'não disponível'],
+    ['Aparelho', `${A.modelo || 'modelo não informado'} · ${A.sistema || ''} · ${A.navegador || ''} · código ${A.id || '—'}`],
+    ['Conferência do rosto', t.rostoConferido ? `confere com o cadastro (diferença ${n2(t.rostoDist)}; limite ${n2(LIMITE)})` : 'sem foto de cadastro na data; selfie registrada'],
+    ['Código de integridade (SHA-256)', (t.hash || '').slice(0, 48) + '…']];
+  let yy = y0 + 7; L.forEach(([k, v]) => { d.setFontSize(7.2); d.setFont(undefined, 'normal'); d.setTextColor(92, 96, 112); d.text(k.toUpperCase(), M + 4, yy); d.setFontSize(8.6); d.setTextColor(23, 25, 37); d.text(d.splitTextToSize(String(v), W - 2 * M - 56)[0], M + 4, yy + 3.6); yy += 6.4; });
+  d.setFontSize(7.5); d.setTextColor(140, 144, 156); d.text('Documento gerado em ' + new Date().toLocaleString('pt-BR') + ' a partir do registro eletrônico do aplicativo Rota Nova Penedo.', M, 290);
+  d.save(`Termo almoco ${t.nome.split(' ')[0]} ${new Date(t.assinadoEm).toISOString().slice(0, 10)}.pdf`);
+}
+
 /* =========================================================
    CONFIGURAÇÕES, IMPORTAR E COPIAR
    ========================================================= */
@@ -1914,7 +1941,7 @@ function renderConfig() {
       <label class="field" style="flex:1"><span>Descontar quando a jornada passar de (horas)</span><input type="number" id="cf-almac" min="0" step="0.5" value="${regrasJornada(S.empresa).almocoAcima / 60}"></label></div>
       <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Início previsto do dia</span><input type="time" id="cf-inip" value="${h(regrasJornada(S.empresa).inicioPrevisto)}"></label>
       <label class="field" style="flex:1"><span>Alerta amarelo após (minutos sem check-in)</span><input type="number" id="cf-tol" min="5" step="5" value="${regrasJornada(S.empresa).tolerancia}"></label></div>
-      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço automático: início (app bloqueado)</span><input type="time" id="cf-almi" value="${h((regrasJornada(S.empresa).almocoFixo || {}).ini || '12:00')}"></label><label class="field" style="flex:1"><span>Fim do almoço</span><input type="time" id="cf-almf" value="${h((regrasJornada(S.empresa).almocoFixo || {}).fim || '13:00')}"></label></div>
+      <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço marcado pelo promotor: pode começar a partir de</span><input type="time" id="cf-almi" value="${h((regrasJornada(S.empresa).almocoJanela || {}).ini || '11:00')}"></label><label class="field" style="flex:1"><span>Almoço termina no máximo às</span><input type="time" id="cf-almf" value="${h((regrasJornada(S.empresa).almocoJanela || {}).fim || '13:00')}"></label></div>
       <label class="field"><span>Início do controle pelo app (dias antes não contam falta)</span><input type="date" id="cf-ini" value="${h(S.empresa.inicioControle || '2026-10-30')}"></label>
       <div><button class="btn primary" id="cf-jor-s">Salvar jornada</button></div></div>
     <div class="card stack"><h3>Alertas no celular do gestor (app ntfy)</h3>
@@ -1962,7 +1989,7 @@ function renderConfig() {
     const carga = {}; let erro = false;
     document.querySelectorAll('[data-cg]').forEach(i => { const m = i.value.trim().match(/^(\d{1,2})(?:[:h](\d{1,2}))?$/); if (!m) erro = true; else carga[i.dataset.cg] = +m[1] * 60 + (+m[2] || 0); });
     if (erro) return toast('Use o formato 8:00 nas cargas.');
-    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60), inicioPrevisto: $('#cf-inip').value || '08:00', tolerancia: +$('#cf-tol').value || 30, almocoFixo: { ini: $('#cf-almi').value || '12:00', fim: $('#cf-almf').value || '13:00' } } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
+    setDoc(doc(db, 'config', 'app'), { inicioControle: $('#cf-ini').value || '2026-10-30', jornada: { carga, almocoMin: +$('#cf-alm').value || 0, almocoAcima: Math.round((+$('#cf-almac').value || 0) * 60), inicioPrevisto: $('#cf-inip').value || '08:00', tolerancia: +$('#cf-tol').value || 30, almocoJanela: { ini: $('#cf-almi').value || '11:00', fim: $('#cf-almf').value || '13:00' } } }, { merge: true }).then(() => { toast('Jornada salva'); P.dadosMes = {}; }, e => toast(erroMsg(e)));
   };
   $('#cf-pass-s').onclick = () => {
     const tarifas = {}, inter = {}; let erro = '';

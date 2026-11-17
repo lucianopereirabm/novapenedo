@@ -8,13 +8,32 @@ export function regrasJornada(cfgApp) {
   return { carga, almocoMin: c.almocoMin ?? ALMOCO_PADRAO.min, almocoAcima: c.almocoAcima ?? ALMOCO_PADRAO.acimaDe, inicioPrevisto: c.inicioPrevisto || '08:00', tolerancia: c.tolerancia ?? 30,
     almocoMinimo: c.almocoMinimo ?? 0, // (antigo) almoço marcado pelo promotor
     // almoço automático: todo dia no mesmo horário, app bloqueado e desconto exato desse intervalo (null = desligado)
-    almocoFixo: c.almocoFixo === null ? null : Object.assign({ ini: '12:00', fim: '13:00', desde: '2026-11-10' }, c.almocoFixo || {}) };
+    almocoFixo: c.almocoFixo === null ? null : Object.assign({ ini: '12:00', fim: '13:00', desde: '2026-11-10', ate: '2026-11-17' }, c.almocoFixo || {}),
+    // a partir de 18/11/2026: almoço marcado pelo promotor (termo assinado: 30 min ou 1h), início e fim dentro da janela
+    almocoJanela: Object.assign({ ini: '11:00', fim: '13:00', desde: '2026-11-18' }, c.almocoJanela || {}) };
 }
 // intervalo do almoço automático de um dia, em ms (hora local) — null se não vale para esse dia
 export function janelaAlmoco(regras, date) {
-  const f = regras && regras.almocoFixo; if (!f || (f.desde && date < f.desde)) return null;
+  const f = regras && regras.almocoFixo; if (!f || (f.desde && date < f.desde) || (f.ate && date > f.ate)) return null;
   const em = t => { const [hh, mm] = String(t).split(':').map(Number); const d = new Date(date + 'T00:00:00'); d.setHours(hh || 0, mm || 0, 0, 0); return d.getTime(); };
   const a = em(f.ini), b = em(f.fim); return b > a ? [a, b] : null;
+}
+
+// janela do almoço marcado (ms, hora local) — null antes de valer
+export function janelaMarcada(regras, date) {
+  const f = regras && regras.almocoJanela; if (!f || (f.desde && date < f.desde)) return null;
+  const em = t => { const [hh, mm] = String(t).split(':').map(Number); const d = new Date(date + 'T00:00:00'); d.setHours(hh || 0, mm || 0, 0, 0); return d.getTime(); };
+  const a = em(f.ini), b = em(f.fim); return b > a ? [a, b] : null;
+}
+// almoço marcado fora da regra do termo (para alerta na gestão)
+export function problemaAlmoco(regras, date, j) {
+  const jan = janelaMarcada(regras, date); if (!jan || !j || !j.almocoInicio) return '';
+  const op = (j.almocoOpcao || 60) * 60000, p = [];
+  if (j.almocoInicio < jan[0]) p.push('começou antes das ' + regras.almocoJanela.ini);
+  if (j.almocoInicio > jan[1] - op) p.push('começou depois do horário');
+  if (j.almocoFim && j.almocoFim > jan[1]) p.push('voltou depois das ' + regras.almocoJanela.fim);
+  if (j.almocoFim && j.almocoFim - j.almocoInicio < op - 60000) p.push('menor que ' + (j.almocoOpcao || 60) + ' min');
+  return p.join(', ');
 }
 
 // Jornada = do primeiro check-in do dia até o check-out da última loja.
@@ -45,7 +64,7 @@ export function calcJornada({ vs = [], j = null, date, regras, agora = Date.now(
     almoco = Math.max(0, Math.round((Math.min(fa, fim) - Math.max(j.almocoInicio, inicio)) / 60000));
   } else almoco = bruto > regras.almocoAcima ? regras.almocoMin : 0;
   const trabalhado = Math.max(0, bruto - almoco);
-  return { tem: true, inicio, fim, fimEst, andamento, emLoja, bruto, almoco, almocoMarcado, almocoAberto, almocoFixo, almocoIni: aIni, almocoFim: aFim, trabalhado, esperado, saldo: trabalhado - esperado, wd };
+  return { tem: true, inicio, fim, fimEst, andamento, emLoja, bruto, almoco, almocoMarcado, almocoAberto, almocoFixo, almocoIni: aIni, almocoFim: aFim, almocoOpcao: j && j.almocoOpcao, trabalhado, esperado, saldo: trabalhado - esperado, wd };
 }
 
 export const hmin = m => { if (m == null) return '—'; const s = m < 0 ? '-' : ''; m = Math.abs(Math.round(m)); return s + Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0'); };

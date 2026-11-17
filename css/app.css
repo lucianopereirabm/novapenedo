@@ -375,3 +375,9 @@ td.pv-clic:hover,tr.pv-clic:hover td{text-decoration:underline;text-decoration-c
 #v-pp:not(.ver-todos) .pp-item.feito{display:none}
 #v-pp.ver-todos .pp-item.feito{opacity:.75;background:#F3FAF5}
 .pp-topo{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:14px;margin-bottom:6px}
+/* almoço marcado pelo promotor */
+.alm-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px}
+.alm-card .btn{flex:none;white-space:nowrap}
+.alm-card.on{border-color:#9CC3F5;background:#F3F8FE}
+.alm-card.fim{opacity:.85}
+@media (max-width:380px){.alm-card{flex-direction:column;align-items:stretch}}

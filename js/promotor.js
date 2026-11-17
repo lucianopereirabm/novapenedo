@@ -6,10 +6,10 @@ import {
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
 import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } from './rosto.js';
-import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco } from './jornada.js';
-import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho } from './termos.js';
+import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco, janelaMarcada } from './jornada.js';
+import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho, VERSAO_ALMOCO, termoAlmoco } from './termos.js';
 
-export const VERSAO_APP = '2026-11-14.1';
+export const VERSAO_APP = '2026-11-17.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -280,6 +280,15 @@ function abreApp() {
     assinaLojas(S.prom.espelhoDe || S.pid); render(); }));
   S.unsub.push(onSnapshot(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = (Array.isArray(it) && it.length ? it : PESQ_PADRAO).slice().sort((x, y) => x.replace(/^\d+\s*-\s*/, '').localeCompare(y.replace(/^\d+\s*-\s*/, ''), 'pt-BR')); if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
+  // termo do almoço (30 min ou 1h): sem ele o app não libera a rota
+  S.unsub.push(onSnapshot(query(collection(db, 'termos'), where('promotorId', '==', S.pid)), { includeMetadataChanges: true }, s => {
+    const t = s.docs.map(d => d.data()).find(x => x.tipo === 'almoco' && x.versao === VERSAO_ALMOCO);
+    let cache = null; try { cache = JSON.parse(lsGet('np.alm.' + S.pid) || 'null'); } catch (e) {}
+    if (t) { S.termoAlm = { opcao: +t.opcao, assinadoEm: t.assinadoEm }; lsSet('np.alm.' + S.pid, JSON.stringify(S.termoAlm)); }
+    else if (s.metadata.fromCache) { if (cache) S.termoAlm = cache; else return; } // sem sinal: usa o que está no celular
+    else { S.termoAlm = null; try { localStorage.removeItem('np.alm.' + S.pid); } catch (e) {} }
+    render();
+  }, () => { try { const c = JSON.parse(lsGet('np.alm.' + S.pid) || 'null'); if (c) { S.termoAlm = c; render(); } } catch (e) {} }));
   S.unsub.push(onSnapshot(doc(db, 'dias', S.hoje, 'jornadas', S.pid), s => { S.jor = s.exists() ? s.data() : null; render(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'app'), s => { if (s.exists()) S.cfgApp = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; render(); }, () => {}));
   setInterval(() => { if (!$('#v-rota').hidden) render(); }, 60000);
@@ -341,22 +350,136 @@ function proximoPasso(origem) {
   }, 250);
 }
 
-/* ---------- trava do almoço (horário de início e fim do dia é livre; o banco de horas confere) ---------- */
+/* ---------- almoço ----------
+   até 17/11/2026: almoço automático (12h–13h, app bloqueado).
+   a partir de 18/11/2026: o promotor assina o termo (30 min ou 1h) e marca início e fim dentro da janela 11h–13h;
+   não encerra antes do tempo escolhido; se não começar até o último horário, o app trava até ele marcar. */
 const regras = () => regrasJornada(S.cfgApp);
 const janAlm = () => janelaAlmoco(regras(), S.hoje);
-function almocoTravado() { // ms até o fim do almoço automático (0 = liberado)
-  const j = janAlm(); const ag = Date.now();
-  return j && ag >= j[0] && ag < j[1] ? j[1] - ag : 0;
+const janMar = () => janelaMarcada(regras(), S.hoje);
+const diaComAlmoco = () => (regras().carga[wdHoje()] || 0) > regras().almocoAcima; // só nos dias de jornada acima de 6h
+function fixoAgora() { const j = janAlm(); const ag = Date.now(); return j && ag >= j[0] && ag < j[1] ? j[1] - ag : 0; }
+function estadoAlm() {
+  if (S.termoAlm === undefined) return { f: 'off' };          // ainda carregando
+  if (!S.termoAlm) return { f: 'termo' };                     // precisa assinar o termo
+  const jan = janMar(); if (!jan || !diaComAlmoco()) return { f: 'off' };
+  const op = (+S.termoAlm.opcao || 60) * 60000, j = S.jor || {}, ag = Date.now();
+  if (j.almocoFim) return { f: 'feito', ini: j.almocoInicio, fim: j.almocoFim };
+  if (j.almocoInicio) return { f: 'almoco', ini: j.almocoInicio, libera: j.almocoInicio + (+j.almocoOpcao || +S.termoAlm.opcao || 60) * 60000 };
+  const ult = jan[1] - op; // último horário para começar e terminar até o fim da janela
+  if (ag < jan[0]) return { f: 'antes', jan, ult };
+  if (ag <= ult) return { f: 'pode', jan, ult };
+  const vs = Object.values(S.vis);
+  const comecou = vs.some(v => v.checkin), resta = vs.some(v => v.status === 'em_loja') || lojasHoje().some(l => !S.vis[vid(l.id)]);
+  return comecou && resta ? { f: 'obrigatorio', jan, ult } : { f: 'tarde', jan, ult };
 }
-// no horário do almoço nada pode ser feito: fecha a visita aberta e mostra a tarja
+// app bloqueado: almoço automático, termo não assinado, almoço em andamento ou almoço atrasado não marcado
+function almocoTravado() { return !!fixoAgora() || ['termo', 'almoco', 'obrigatorio'].includes(estadoAlm().f); }
 function bloqueiaAlmoco() {
   if (!almocoTravado()) return false;
   if (S.visita) { if (unsubFotos) { unsubFotos(); unsubFotos = null; } S.visita = null; $('#sheet').hidden = true; }
-  toast('Horário de almoço: o app volta a funcionar às ' + ((regras().almocoFixo || {}).fim || '13:00') + '.', 5000);
+  const f = estadoAlm().f;
+  toast(fixoAgora() ? 'Horário de almoço: o app volta a funcionar às ' + ((regras().almocoFixo || {}).fim || '13:00') + '.'
+    : f === 'termo' ? 'Assine o termo do horário de almoço para continuar.'
+    : f === 'obrigatorio' ? 'Marque o início do seu almoço para continuar.' : 'Você está em horário de almoço.', 5000);
   render(); return true;
 }
 let estAlm = null;
-setInterval(() => { const t = !!almocoTravado(); if (t !== estAlm) { estAlm = t; if (t && S.visita && !document.querySelector('#modal:not([hidden])')) { if (unsubFotos) { unsubFotos(); unsubFotos = null; } S.visita = null; $('#sheet').hidden = true; } render(); } else if (t) render(); }, 15000);
+setInterval(() => {
+  if (!S.pid) return;
+  const e = estadoAlm(); const k = (fixoAgora() ? 'fixo' : '') + e.f + (e.f === 'almoco' && Date.now() >= e.libera ? 'lib' : '');
+  if (k !== estAlm) { const trava = almocoTravado(); estAlm = k; if (trava && S.visita && !document.querySelector('#modal:not([hidden])')) { if (unsubFotos) { unsubFotos(); unsubFotos = null; } S.visita = null; $('#sheet').hidden = true; } render(); }
+  else if (fixoAgora() || e.f === 'almoco') { const t = $('#alm-cont'); if (t) t.textContent = contaAlm(e); }
+}, 15000);
+function contaAlm(e) { const r = e.libera - Date.now(); return r > 0 ? 'faltam ' + hmin(Math.ceil(r / 60000)) : 'já pode encerrar'; }
+async function iniciaAlmoco(atrasado) {
+  const op = +S.termoAlm.opcao || 60, ag = Date.now();
+  const aberta = Object.values(S.vis).find(v => v.status === 'em_loja');
+  if (!(await confirma(`Iniciar o almoço agora, às ${hm(ag)}?\n\nO app fica bloqueado e só deixa encerrar a partir das ${hm(ag + op * 60000)} (${op === 30 ? '30 minutos' : '1 hora'}).${aberta ? '\n\nA visita em ' + (aberta.lojaNome || 'loja') + ' continua aberta: termine depois do almoço.' : ''}`, 'Iniciar almoço'))) return;
+  const d = { promotorId: S.pid, almocoInicio: Date.now(), almocoOpcao: op, almocoInicioSrv: serverTimestamp() };
+  if (atrasado) d.almocoAtrasado = true;
+  S.jor = Object.assign({}, S.jor || {}, d); render();
+  grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), d, { merge: true }));
+}
+async function encerraAlmoco() {
+  const e = estadoAlm(); if (e.f !== 'almoco') return;
+  if (Date.now() < e.libera) return toast(`Ainda não: o almoço só pode ser encerrado a partir das ${hm(e.libera)}.`, 5000);
+  if (!(await confirma(`Encerrar o almoço agora, às ${hm(Date.now())}?`, 'Encerrar almoço'))) return;
+  if (Date.now() < e.libera) return;
+  const d = { almocoFim: Date.now(), almocoFimSrv: serverTimestamp() };
+  S.jor = Object.assign({}, S.jor || {}, d); render();
+  grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), Object.assign({ promotorId: S.pid }, d), { merge: true }));
+}
+// cartão do almoço na tela da rota
+function cartaoAlmoco() {
+  const e = estadoAlm(); const op = S.termoAlm && +S.termoAlm.opcao;
+  const opTxt = op === 30 ? '30 min' : '1 hora';
+  if (e.f === 'antes') return `<div class="card alm-card"><div><div class="label">🍽️ Almoço · ${opTxt}</div><b>Pode iniciar a partir das ${hm(e.jan[0])}</b><div class="muted" style="font-size:12px">Comece até as ${hm(e.ult)} para terminar até as ${hm(e.jan[1])}.</div></div><button class="btn" disabled>Iniciar almoço</button></div>`;
+  if (e.f === 'pode') return `<div class="card alm-card on"><div><div class="label">🍽️ Almoço · ${opTxt}</div><b>Inicie até as ${hm(e.ult)}</b><div class="muted" style="font-size:12px">Termina no máximo às ${hm(e.jan[1])}.</div></div><button class="btn primary" id="alm-ini">Iniciar almoço</button></div>`;
+  if (e.f === 'tarde') return `<div class="card alm-card"><div><div class="label">🍽️ Almoço · ${opTxt}</div><b style="color:var(--crit)">Almoço não marcado</b><div class="muted" style="font-size:12px">O horário era das ${hm(e.jan[0])} às ${hm(e.jan[1])}.</div></div><button class="btn" id="alm-ini" data-atr="1">Iniciar almoço</button></div>`;
+  if (e.f === 'feito') return `<div class="card alm-card fim"><div><div class="label">🍽️ Almoço</div><b class="num">${hm(e.ini)}–${hm(e.fim)} · ${hmin(Math.round((e.fim - e.ini) / 60000))}</b></div></div>`;
+  return '';
+}
+// telas que bloqueiam a rota: termo, almoço em andamento, almoço obrigatório
+function telaAlmoco(e) {
+  const rod = `<p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
+  const aberta = Object.values(S.vis).find(v => v.status === 'em_loja');
+  const loja = aberta ? h(aberta.lojaNome || (S.lojas.find(l => l.id === aberta.lojaId) || {}).nome || 'loja') : '';
+  if (e.f === 'almoco') {
+    const ok = Date.now() >= e.libera;
+    return `<div class="card stack alm-tarja" style="text-align:center;padding:28px 18px"><div style="font-size:44px">🍽️</div><h2>Em horário de almoço</h2>
+      <p style="margin:0">Almoço iniciado às <b>${hm(e.ini)}</b>. O aplicativo fica <b>bloqueado</b>: nenhuma atividade é permitida.</p>
+      ${aberta ? `<p class="muted" style="margin:0">A visita em <b>${loja}</b> continua aberta: termine depois do almoço.</p>` : ''}
+      <div class="num" id="alm-cont" style="font:800 30px var(--f-body)">${contaAlm(e)}</div>
+      <button class="btn ${ok ? 'primary' : ''} big" id="alm-fim" ${ok ? '' : 'disabled'}>${ok ? 'Encerrar almoço' : 'Encerrar a partir das ' + hm(e.libera)}</button></div>${rod}`;
+  }
+  if (e.f === 'obrigatorio') return `<div class="card stack alm-tarja" style="text-align:center;padding:28px 18px"><div style="font-size:44px">⏰</div><h2>Marque seu almoço</h2>
+      <p style="margin:0">O almoço precisava começar até as <b>${hm(e.ult)}</b>. Para continuar usando o app, inicie o almoço agora. O horário fica registrado como <b>fora do horário</b>.</p>
+      <button class="btn primary big" id="alm-ini" data-atr="1">Iniciar almoço agora</button></div>${rod}`;
+  return '';
+}
+function telaTermoAlmoco(c) {
+  const R = regras().almocoJanela || { ini: '11:00', fim: '13:00' };
+  const T = { opcao: S.taOp || 0, nome: (S.prom && S.prom.nome) || '', empresa: (S.cfgApp && S.cfgApp.empresa) || 'Nova Penedo Distribuidora', cnpj: (S.cfgApp && S.cfgApp.cnpj) || '', ini: R.ini, fim: R.fim };
+  c.innerHTML = `<div><div class="label">Antes de continuar</div><h2 style="font-size:24px">Termo do horário de almoço</h2><p class="muted" style="margin:4px 0 0;font-size:14px">Escolha quanto tempo de almoço você vai tirar por dia, leia o termo e assine com uma foto do seu rosto.</p></div>
+    <div class="card stack"><div class="field"><span>Meu almoço será de</span><div class="chips" id="ta-op"><button class="chip" data-v="30" aria-pressed="${T.opcao === 30}">30 minutos</button><button class="chip" data-v="60" aria-pressed="${T.opcao === 60}">1 hora</button></div></div>
+      <div class="note">Início a partir das <b>${h(R.ini)}</b> e fim no máximo às <b>${h(R.fim)}</b>. O app não deixa encerrar antes do tempo escolhido.</div>
+      <div class="termo" id="ta-txt"></div>
+      <label class="ck"><input type="checkbox" id="ta-ck"> Li e concordo com este termo.</label>
+      <div id="ta-msg" class="muted" style="font-size:13px;min-height:18px"></div>
+      <button class="btn primary big" id="ta-ok">Assinar com minha foto</button></div>
+    <p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
+  const atualiza = () => { $('#ta-txt').textContent = termoAlmoco(T); };
+  atualiza();
+  c.querySelectorAll('#ta-op .chip').forEach(b => b.onclick = () => { T.opcao = S.taOp = +b.dataset.v; c.querySelectorAll('#ta-op .chip').forEach(x => x.setAttribute('aria-pressed', String(x === b))); atualiza(); });
+  const msg = t => $('#ta-msg').innerHTML = t;
+  $('#ta-ok').onclick = async () => {
+    if (!T.opcao) return msg('<span style="color:var(--crit)">Escolha 30 minutos ou 1 hora.</span>');
+    if (!$('#ta-ck').checked) return msg('<span style="color:var(--crit)">Marque que leu e concorda com o termo.</span>');
+    const b = $('#ta-ok'); b.disabled = true;
+    try {
+      b.textContent = 'Abrindo a câmera…';
+      const cv = await tiraFoto({ frontal: true, titulo: 'Foto para assinar o termo do almoço' });
+      if (!cv) return;
+      b.textContent = 'Conferindo o rosto…';
+      let r = null; try { r = await leRosto(cv); } catch (e) {}
+      if (!r) return msg('<span style="color:var(--crit)">Não encontrei seu rosto na foto. Tire de novo, de frente e com boa luz.</span>');
+      const d = S.rosto ? distRosto(r.desc, S.rosto) : null;
+      if (d != null && d > LIMITE) return msg('<span style="color:var(--crit)">A foto não confere com o rosto do cadastro. Só o(a) próprio(a) promotor(a) pode assinar.</span>');
+      b.textContent = 'Pegando a localização…';
+      let gps = null; try { gps = await pegaGPS(15000); } catch (e) {}
+      const texto = termoAlmoco(T);
+      const reg = { promotorId: S.pid, uid: S.uid, tipo: 'almoco', versao: VERSAO_ALMOCO, opcao: T.opcao, nome: T.nome, empresa: T.empresa, cnpj: T.cnpj, janela: { ini: R.ini, fim: R.fim },
+        texto, hash: await hashTexto(texto), aparelho: await infoAparelho(), assinadoEm: Date.now(), recebido: serverTimestamp(), gps,
+        selfie: await comprime(cv, 45000), rostoDist: d, rostoConferido: d != null };
+      b.textContent = 'Gravando…';
+      S.termoAlm = { opcao: T.opcao, assinadoEm: reg.assinadoEm }; lsSet('np.alm.' + S.pid, JSON.stringify(S.termoAlm));
+      grava(setDoc(doc(db, 'termos', S.pid + '_almoco'), reg));
+      toast('Termo assinado: almoço de ' + (T.opcao === 30 ? '30 minutos' : '1 hora') + '.', 4000);
+      render();
+    } finally { const bb = $('#ta-ok'); if (bb) { bb.disabled = false; bb.textContent = 'Assinar com minha foto'; } }
+  };
+}
 
 /* ---------- aviso para o celular do gestor (app ntfy) ---------- */
 // Envia na hora; sem sinal, guarda no celular e envia quando a internet voltar.
@@ -405,7 +528,7 @@ function render() {
   const feitas = lojas.filter(l => { const v = S.vis[vid(l.id)]; return v && v.status !== 'em_loja'; }).length;
   const extras = Object.entries(S.vis).filter(([k, v]) => v.foraRota || k !== vid(v.lojaId)).sort((a, b) => (a[1].checkin || 0) - (b[1].checkin || 0));
   let html = (S.prom && S.prom.espelhoDe ? `<div class="note warn"><b>Modo teste.</b> Você está usando a rota de outro promotor só para simular. Tudo o que fizer aqui fica no usuário de teste e não mexe na rota nem nos dados dele.</div>` : '') + `<div><div class="label">Rota de ${DIAS_LONGO[wdHoje()]} · ${S.hoje.split('-').reverse().slice(0, 2).join('/')}</div><h2 class="num">${feitas} de ${lojas.length} lojas</h2></div>
-    <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}`;
+    <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}${cartaoAlmoco()}`;
   if (!lojas.length) html += `<div class="empty"><b>Sem lojas para hoje</b>Nenhuma loja está marcada para ${DIAS_LONGO[wdHoje()]} na sua rota.</div>`;
   else html += '<div class="stops">' + lojas.map((l, i) => {
     const v = S.vis[vid(l.id)]; const cls = v ? (v.status === 'em_loja' ? 'live' : v.status === 'concluida' ? 'done' : '') : '';
@@ -414,7 +537,10 @@ function render() {
   if (extras.length) html += '<div class="label">Fora da rota e visitas extras</div><div class="stops">' + extras.map(([k, v]) => `<button class="stop" data-loja="${h(v.lojaId)}" data-fora="1" data-vid="${h(k)}"><span class="n">+</span><span class="t"><b>${h(v.lojaNome)}${v.visitaN > 1 ? ` · ${v.visitaN}ª visita` : ''}</b><span>${h(v.cidade || '')}</span></span>${statusPill(v)}</button>`).join('') + '</div>';
   html += `<button class="btn" id="b-fora">Visitar loja fora da rota de hoje</button><button class="btn" id="b-var">💰 Minha variável</button>`;
   html += `<p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
-  const trava = almocoTravado();
+  const EA = estadoAlm();
+  if (EA.f === 'termo' && !fixoAgora()) { if (!$('#ta-ok')) telaTermoAlmoco(c); return; } // termo do almoço: tela fixa (não redesenha para não perder a escolha)
+  const trava = fixoAgora();
+  if (!trava && (EA.f === 'almoco' || EA.f === 'obrigatorio')) html = telaAlmoco(EA);
   if (trava) { // almoço automático: app bloqueado
     const f = regras().almocoFixo; const aberta = Object.values(S.vis).find(v => v.status === 'em_loja');
     html = `<div class="card stack alm-tarja" style="text-align:center;padding:28px 18px"><div style="font-size:44px">🍽️</div><h2>Horário de almoço</h2>
@@ -424,7 +550,9 @@ function render() {
       <p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
   }
   c.innerHTML = html;
-  if (trava) return;
+  const bi = $('#alm-ini'); if (bi) bi.onclick = () => iniciaAlmoco(!!bi.dataset.atr);
+  const bf = $('#alm-fim'); if (bf) bf.onclick = encerraAlmoco;
+  if (trava || EA.f === 'almoco' || EA.f === 'obrigatorio') return;
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora, b.dataset.vid));
   $('#b-fora').onclick = buscaFora; $('#b-var').onclick = () => minhaVariavel();
 }
@@ -484,7 +612,7 @@ function cartaoJornada() {
   const pend = lojasHoje().filter(l => !S.vis[vid(l.id)]).length;
   const jan = janAlm(); const f = regras().almocoFixo;
   const alm = jan ? `<div class="jor-alm"><span class="muted">🍽️ Almoço automático das ${f.ini} às ${f.fim} (app bloqueado nesse horário)</span></div>`
-    : jor.almocoFim ? `<div class="jor-alm"><span>🍽️ Almoço ${hm(jor.almocoInicio)}–${hm(jor.almocoFim)} · ${hmin((jor.almocoFim - jor.almocoInicio) / 60000)}</span></div>` : '';
+    : jor.almocoFim && !janMar() ? `<div class="jor-alm"><span>🍽️ Almoço ${hm(jor.almocoInicio)}–${hm(jor.almocoFim)} · ${hmin((jor.almocoFim - jor.almocoInicio) / 60000)}</span></div>` : '';
   const desc = J.almoco ? `<span class="muted" style="font-size:12px"> (almoço ${J.almocoMarcado || J.almocoFixo ? hmin(J.almoco) : 'de 1h'} descontado)</span>` : '';
   if (J.andamento || pend) return `<div class="jor card on"><div style="flex:1"><div class="label">Jornada desde ${hm(J.inicio)}</div><b class="num">${hmin(J.trabalhado)} trabalhadas${J.andamento ? '' : ' até a última saída'}</b>${desc}${alm}</div></div>`;
   return `<div class="jor card fim"><div style="flex:1"><div class="label">Jornada do dia</div><b class="num">${hm(J.inicio)}–${hm(J.fim)} · ${hmin(J.trabalhado)}</b> <span class="muted num" style="font-size:12px">saldo ${saldoTxt(J.saldo)}</span>${desc}${alm}</div></div>`;
