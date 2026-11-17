@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO, VERSAO_ALMOCO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO, problemaAlmoco } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-17.1';
+const VERSAO_GESTAO = '2026-11-17.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -289,7 +289,10 @@ function ultimoEvento(d) {
 function deslCard(d) {
   const vs = d.paradas.filter(x => x.v && x.v.checkin && x.v.status !== 'nao_visitada').sort((a, b) => a.v.checkin - b.v.checkin);
   const tr = [];
-  for (let i = 1; i < vs.length; i++) { const a = vs[i - 1], b = vs[i]; if (a.v.checkout && a.v.checkout <= b.v.checkin) tr.push({ de: a, para: b, min: Math.round((b.v.checkin - a.v.checkout) / 60000) }); }
+  // o almoço que cai entre duas lojas não conta como deslocamento
+  const a0 = d.J && d.J.almocoIni, a1 = d.J && (d.J.almocoFim || (d.J.almocoIni ? Date.now() : 0));
+  const semAlm = (x, y) => (y - x) - (a0 ? Math.max(0, Math.min(y, a1) - Math.max(x, a0)) : 0);
+  for (let i = 1; i < vs.length; i++) { const a = vs[i - 1], b = vs[i]; if (a.v.checkout && a.v.checkout <= b.v.checkin) tr.push({ de: a, para: b, min: Math.round(semAlm(a.v.checkout, b.v.checkin) / 60000) }); }
   const ult = vs[vs.length - 1];
   const emTransito = ult && ult.v.checkout && d.J.andamento && vs.length < d.paradas.filter(x => x.v ? x.v.status !== 'nao_visitada' : true).length;
   if (!tr.length && !emTransito) return '';
