@@ -874,7 +874,9 @@ function conexoesDia(d) {
     let de = null, real = null;
     if (x.v && x.v.checkin && x.v.status !== 'nao_visitada') { // veio da visita anterior no tempo
       de = visit.filter(y => y !== x && y.v.checkout && y.v.checkout <= x.v.checkin).sort((a, b) => b.v.checkout - a.v.checkout)[0];
-      if (de) real = Math.round((x.v.checkin - de.v.checkout) / 60000);
+      if (de) { real = Math.round((x.v.checkin - de.v.checkout) / 60000);
+        const a0 = d.J && d.J.almocoIni, a1 = d.J && (d.J.almocoFim || (a0 ? Date.now() : 0));
+        if (a0) { const alm = Math.round(Math.max(0, Math.min(x.v.checkin, a1) - Math.max(de.v.checkout, a0)) / 60000); if (alm > 0) { real -= alm; x.almNoTrecho = alm; } } }
       else return; // primeira loja do dia: o trajeto de casa aparece no quadro de deslocamento
     } else de = ps[ix - 1];
     if (!de) return;
@@ -882,7 +884,7 @@ function conexoesDia(d) {
     const pb = x.v && x.v.gpsIn ? [x.v.gpsIn.lat, x.v.gpsIn.lng] : pontoLoja(S.lojas.find(l => l.id === x.lojaId) || {});
     const alvo = pa && pb ? `data-cx="${pa.join(',')};${pb.join(',')}"` : '';
     const lento = real != null && real > 60;
-    out[ix] = `<div class="conx${lento ? ' lento' : ''}" ${alvo}><span class="cx-l">🚌</span><span>${real != null ? `<b>${hmin(real)}</b> de deslocamento · saiu da ${h(de.nome)} às ${hm(de.v.checkout)}, chegou às ${hm(x.v.checkin)}` : `próxima loja · vindo da ${h(de.nome)}`}<span class="cx-km muted">${alvo ? ' · calculando distância…' : ''}</span></span></div>`;
+    out[ix] = `<div class="conx${lento ? ' lento' : ''}" ${alvo}><span class="cx-l">🚌</span><span>${real != null ? `<b>${hmin(real)}</b> de deslocamento · saiu da ${h(de.nome)} às ${hm(de.v.checkout)}, chegou às ${hm(x.v.checkin)}${x.almNoTrecho ? ` · 🍽️ almoço de ${hmin(x.almNoTrecho)} descontado` : ''}` : `próxima loja · vindo da ${h(de.nome)}`}<span class="cx-km muted">${alvo ? ' · calculando distância…' : ''}</span></span></div>`;
   });
   return out;
 }
