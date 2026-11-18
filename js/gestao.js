@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO, VERSAO_ALMOCO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO, problemaAlmoco } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-18.1';
+const VERSAO_GESTAO = '2026-11-18.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -1081,8 +1081,23 @@ async function detalheVisita(date, id, vInfo) {
     try {
       const s = await getDoc(doc(db, 'dias', date, 'fotos', id)); const box = $('#md-fotos'); if (!box) return;
       const nomes = { chegada: 'Chegada (selfie)', antes: 'Gôndola antes', depois: 'Gôndola depois', extra: 'Foto extra', saida: 'Saída (selfie)' };
-      const imgs = s.exists() ? (s.data().imgs || []) : [];
+      const ORD = { chegada: 0, antes: 1, depois: 2, extra: 3, saida: 4 }; const imgs = (s.exists() ? (s.data().imgs || []) : []).slice().sort((x, y) => (ORD[x.tipo] ?? 3) - (ORD[y.tipo] ?? 3)); // sempre na ordem chegada → antes → depois
       box.innerHTML = imgs.length ? imgs.map((f, i) => `<div class="stack" style="gap:4px"><div class="label" style="color:var(--ink)">${nomes[f.tipo] || 'Foto'} · ${hm(f.ts)}</div><img class="bigfoto" src="${f.d}" alt="${nomes[f.tipo] || 'Foto'}">${!S.leitura && (f.tipo === 'chegada' || f.tipo === 'saida') ? `<div><button class="btn sm" data-usarosto="${i}">Usar esta selfie como foto do cadastro</button> <span class="muted" data-usamsg="${i}" style="font-size:12px"></span></div>` : ''}</div>`).join('') : 'Nenhuma foto.';
+      // antes/depois fora de ordem (tirados ao contrário): o gestor inverte com um clique
+      const fA = imgs.find(f => f.tipo === 'antes'), fD = imgs.find(f => f.tipo === 'depois');
+      if (fA && fD) {
+        const fora = (fD.ts || 0) < (fA.ts || 0);
+        box.insertAdjacentHTML('afterbegin', `<div class="note" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between">${fora ? '<span>⚠️ <b>Fotos fora de ordem:</b> a foto "depois" foi tirada antes da foto "antes".</span>' : '<span class="muted">Se o promotor trocou as fotos antes e depois, dá para inverter.</span>'}${S.leitura ? '' : '<button class="btn sm" id="md-inv">Inverter antes ⇄ depois</button>'}</div>`);
+        const bi = $('#md-inv'); if (bi) bi.onclick = async () => {
+          if (!(await confirma('Inverter as fotos antes e depois desta visita?\n\nA foto que está como "antes" passa a ser "depois" e vice-versa.', 'Inverter'))) return;
+          bi.disabled = true;
+          try {
+            const novas = imgs.map(f => f.tipo === 'antes' ? Object.assign({}, f, { tipo: 'depois' }) : f.tipo === 'depois' ? Object.assign({}, f, { tipo: 'antes' }) : f);
+            await updateDoc(doc(db, 'dias', date, 'fotos', id), { imgs: novas, invertidas: { em: Date.now(), por: (auth.currentUser && auth.currentUser.email) || '' } });
+            toast('Fotos antes e depois invertidas'); fechaModal();
+          } catch (err) { toast(erroMsg(err)); bi.disabled = false; }
+        };
+      }
       box.querySelectorAll('[data-usarosto]').forEach(bt => bt.onclick = async () => {
         const i = +bt.dataset.usarosto; const f = imgs[i]; const msg = box.querySelector(`[data-usamsg="${i}"]`); const nome = promNome(v.promotorId);
         if (!(await confirma(`Trocar a foto do cadastro de ${nome} por esta selfie? A partir daí o reconhecimento do rosto no app compara com ela.`, 'Trocar foto'))) return;

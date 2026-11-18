@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco, janelaMarcada } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho, VERSAO_ALMOCO, termoAlmoco } from './termos.js';
 
-export const VERSAO_APP = '2026-11-18.1';
+export const VERSAO_APP = '2026-11-18.2';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -828,12 +828,19 @@ function renderFotos() {
     const f = S.fotos.find(x => (x.tipo || 'extra') === t);
     if (f) return `<div class="stack" style="gap:4px"><div class="foto"><img src="${f.d}" alt="${l}">${pode && t !== 'chegada' && t !== 'saida' ? `<button aria-label="Refazer ${l}" data-rm="${t}">×</button>` : ''}</div><span class="muted num" style="font-size:11px;text-align:center">${l} · ${hm(f.ts)}</span></div>`;
     if (t === 'chegada' || t === 'saida') return '';
+    // ordem obrigatória: chegada (no check-in) → gôndola antes → gôndola depois
+    if (pode && t === 'depois' && !S.fotos.some(x => x.tipo === 'antes')) return `<div class="stack" style="gap:4px"><button class="addfoto" disabled style="opacity:.55;cursor:not-allowed"><b>🔒</b>${l}<span style="font-size:11px;color:var(--muted)">tire primeiro a foto antes</span></button></div>`;
     return pode ? `<div class="stack" style="gap:4px"><button class="addfoto" data-tirar="${t}"><b>+</b>${l}${t !== 'extra' ? '<span style="font-size:11px;color:var(--crit)">obrigatória</span>' : ''}</button></div>` : '';
   }).join('');
   $('#v-fotos-n').textContent = `${['antes', 'depois'].filter(t => S.fotos.some(x => x.tipo === t)).length} de 2 obrigatórias`;
-  g.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => { if (await confirma('Apagar esta foto para tirar de novo?', 'Apagar')) salvaFotos(S.fotos.filter(x => (x.tipo || 'extra') !== b.dataset.rm)); });
+  g.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
+    const t = b.dataset.rm; const levaDepois = t === 'antes' && S.fotos.some(x => x.tipo === 'depois'); // refazer o "antes" apaga o "depois" junto, para a ordem não inverter
+    if (await confirma(levaDepois ? 'Apagar a foto ANTES para tirar de novo?\n\nA foto DEPOIS também será apagada: as fotos precisam seguir a ordem antes → depois.' : 'Apagar esta foto para tirar de novo?', 'Apagar'))
+      salvaFotos(S.fotos.filter(x => { const k = x.tipo || 'extra'; return k !== t && !(levaDepois && k === 'depois'); }));
+  });
   g.querySelectorAll('[data-tirar]').forEach(b => b.onclick = async () => {
-    const t = b.dataset.tirar; const cv = await tiraFoto({ titulo: (TIPOS.find(x => x[0] === t) || [])[1] });
+    const t = b.dataset.tirar; if (t === 'depois' && !S.fotos.some(x => x.tipo === 'antes')) { toast('Tire primeiro a foto ANTES da gôndola.'); return; }
+    const cv = await tiraFoto({ titulo: (TIPOS.find(x => x[0] === t) || [])[1] });
     if (!cv) return;
     salvaFotos(S.fotos.filter(x => (x.tipo || 'extra') !== t).concat([{ d: await comprime(cv), ts: Date.now(), tipo: t }]));
   });
