@@ -9,7 +9,7 @@ import { leRosto, leRostoFoto, recorteRosto, distRosto, LIMITE } from './rosto.j
 import { VERSAO, VERSAO_ALMOCO } from './termos.js';
 import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO, problemaAlmoco } from './jornada.js';
 
-const VERSAO_GESTAO = '2026-11-17.2';
+const VERSAO_GESTAO = '2026-11-18.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -57,7 +57,7 @@ function iniciar() {
   escuta(collection(db, 'aparelhos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.aparelhos = m; S.erroAparelhos = ''; if (S.tab === 'equipe') render(); }, e => { S.erroAparelhos = (e && e.code) || 'erro'; if (S.tab === 'equipe') render(); });
   if (!S.leitura) escuta(collection(db, 'leitores'), s => { S.leitores = s.docs.map(d => ({ id: d.id, ...d.data() })); if (S.tab === 'equipe') render(); }, () => {});
   if (!S.leitura) escuta(collection(db, 'acessos'), s => { const m = {}; s.docs.forEach(d => m[d.id] = d.data()); S.acessos = m; if (S.tab === 'equipe') render(); }, () => {});
-  escuta(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.tab === 'config') render(); }, () => {});
+  escuta(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.valCfg = (s.exists() && s.data().validade) || null; if (typeof VAL !== 'undefined') VAL.em = 0; S.pesquisa = Array.isArray(it) && it.length ? it : PESQ_PADRAO; if (S.tab === 'config') render(); }, () => {});
   if (!S.leitura) escuta(doc(db, 'config', 'rotasBackup'), s => { S.bkRotas = s.exists() ? s.data() : null; if (S.tab === 'montar') render(); }, () => {});
   escuta(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.tab === 'config') render(); }, () => {});
   escuta(doc(db, 'config', 'app'), s => { if (s.exists()) S.empresa = s.data(); if (s.exists() && +s.data().raio) S.raio = +s.data().raio; if (S.tab === 'config') render(); }, () => {});
@@ -431,7 +431,7 @@ async function pdfDiretoria(o) {
   const T = filtraPV(VAL.todos || []);
   const grupo = L => { const g = new Map(); L.forEach(r => { if (!g.has(r.produto)) g.set(r.produto, []); g.get(r.produto).push(r); }); return [...g.entries()].sort((a, b) => alfaProd(a[0], b[0])); };
   const lojasPesq = new Set(T.map(r => r.v.lojaId)).size;
-  const V = T.filter(r => r.x.val && !r.x.falta); const vR = V.filter(r => r.faltam < 7), vA = V.filter(r => r.faltam >= 7 && r.faltam < 10), vV = V.filter(r => r.faltam >= 10);
+  const V = T.filter(r => r.x.val && !r.x.falta); const vR = V.filter(r => r.fx === 'r'), vA = V.filter(r => r.fx === 'a'), vV = V.filter(r => r.fx === 'v');
   const P = T.filter(r => !r.x.falta && typeof r.x.preco === 'number'); const R = T.filter(r => r.x.falta);
   const qt = L => L.reduce((s, r) => s + (+r.x.qtd || 0), 0);
   const ini = new Date(); ini.setDate(ini.getDate() - VAL.dias + 1);
@@ -462,8 +462,8 @@ async function pdfDiretoria(o) {
   caixa(M, y, bw, 22, lojasPesq, 'Lojas pesquisadas', INK); caixa(M + bw + 3, y, bw, 22, P.length, 'Preços de ponta lançados', INK);
   caixa(M + 2 * (bw + 3), y, bw, 22, R.length, `Rupturas (${T.length ? Math.round(R.length / T.length * 100) : 0}% das verificações)`, VERM); caixa(M + 3 * (bw + 3), y, bw, 22, grupo(R).length, 'Produtos com alguma ruptura', VERM);
   y += 26;
-  caixa(M, y, bw, 22, vR.length, `Validade < 7 dias${qt(vR) ? ' · ' + qt(vR) + ' un a vender' : ''}`, VERM); caixa(M + bw + 3, y, bw, 22, vA.length, `Validade 7 a 9 dias${qt(vA) ? ' · ' + qt(vA) + ' un' : ''}`, AMAR);
-  caixa(M + 2 * (bw + 3), y, bw, 22, vV.length, 'Validade 10 dias ou mais', VERD); caixa(M + 3 * (bw + 3), y, bw, 22, grupo(P).length, 'Produtos com preço pesquisado', INK);
+  caixa(M, y, bw, 22, vR.length, `Validade no vermelho${qt(vR) ? ' · ' + qt(vR) + ' un a vender' : ''}`, VERM); caixa(M + bw + 3, y, bw, 22, vA.length, `Validade no amarelo${qt(vA) ? ' · ' + qt(vA) + ' un' : ''}`, AMAR);
+  caixa(M + 2 * (bw + 3), y, bw, 22, vV.length, 'Validade no verde', VERD); caixa(M + 3 * (bw + 3), y, bw, 22, grupo(P).length, 'Produtos com preço pesquisado', INK);
   y += 30;
   // destaques automáticos
   const dest = [];
@@ -475,15 +475,15 @@ async function pdfDiretoria(o) {
 
   // ---------- validades ----------
   if (o.val) {
-    y = cabecalho('Validades', 'Validade mais próxima encontrada na gôndola · vermelho < 7 dias · amarelo 7 a 9 dias · verde 10 dias ou mais');
-    [[vR, 'Validade abaixo de 7 dias · data apertada', VERM, [253, 236, 236]], [vA, 'Validade de 7 a 9 dias', AMAR, [255, 246, 214]]].forEach(([L, t, cor, fundo]) => {
+    y = cabecalho('Validades', 'Validade mais próxima encontrada na gôndola · faixas de alerta conforme o limite de cada produto');
+    [[vR, 'Validade abaixo de 7 dias · data apertada', VERM, [253, 236, 236]], [vA, 'Validade no amarelo', AMAR, [255, 246, 214]]].forEach(([L, t, cor, fundo]) => {
       y = novaSe(y, 30); y = secao(y, `${t} (${grupo(L).length} produto${grupo(L).length === 1 ? '' : 's'})`, cor);
       if (!L.length) { docp.setFontSize(9); docp.setTextColor(...MUT); docp.text('Nenhum produto nesta faixa.', M, y); y += 9; return; }
       const body = []; grupo(L).forEach(([p, rs]) => { body.push([{ content: nomeProd(p) + `  ·  ${rs.length} loja${rs.length > 1 ? 's' : ''}${qt(rs) ? ' · ' + qt(rs) + ' un a vender' : ''}`, colSpan: 6, styles: { fillColor: fundo, fontStyle: 'bold', textColor: cor } }]);
         if (o.det) rs.slice().sort((a, b) => a.faltam - b.faltam || alfaLoja(a, b)).forEach(r => { const lj = lojaDe(r); body.push([`${lj.cod} · ${lj.nome}`, lj.cid, dataBR(r.x.val), faltamTxt(r.faltam), r.x.qtd != null ? r.x.qtd + ' un' : '—', `${promNome(r.v.promotorId).split(' ')[0]} · ${dataBR(r.d).slice(0, 5)}`]); }); });
       y = tab(y, ['Loja', 'Cidade', 'Validade', 'Prazo', 'Qtd a vender', 'Pesquisa'], body, { columnStyles: { 2: { halign: 'center' }, 4: { halign: 'right' } } });
     });
-    y = novaSe(y, 30); y = secao(y, `Validade boa · 10 dias ou mais (${grupo(vV).length} produtos)`, VERD);
+    y = novaSe(y, 30); y = secao(y, `Validade boa · no verde (${grupo(vV).length} produtos)`, VERD);
     y = tab(y, ['Produto', 'Lojas', 'Validade mais próxima'], grupo(vV).map(([p, rs]) => [nomeProd(p), rs.length, dataBR(rs.map(r => r.x.val).sort()[0])]), { columnStyles: { 1: { halign: 'center' }, 2: { halign: 'center' } } });
   }
   // ---------- preços ----------
@@ -542,15 +542,19 @@ async function carregaValidades(forca) {
         if (emTeste(v.promotorId, d) && (S.promotores.find(p => p.id === v.promotorId) || {}).espelhoDe) return; // usuário de teste fora dos relatórios
         Object.entries(v.precos || {}).forEach(([k, x]) => { if (!x) return; ult.set(v.lojaId + '|' + k, { d, k, x, v, produto: nomes.get(k) || k }); });
       }); });
-      VAL.todos = [...ult.values()].filter(r => nomes.has(r.k)).map(r => Object.assign(r, { faltam: r.x.val ? diasAteV(r.x.val) : null }));
-      VAL.cache = VAL.todos.filter(r => r.x.val && !r.x.falta && r.faltam < 10).sort((a, b) => alfaProd(a.produto, b.produto) || alfaLoja(a, b));
-      VAL.verdes = VAL.todos.filter(r => r.x.val && !r.x.falta && r.faltam >= 10).sort((a, b) => alfaProd(a.produto, b.produto) || alfaLoja(a, b));
+      VAL.todos = [...ult.values()].filter(r => nomes.has(r.k)).map(r => { const faltam = r.x.val ? diasAteV(r.x.val) : null; return Object.assign(r, { faltam, fx: faixaV(faltam, r.produto) }); });
+      VAL.cache = VAL.todos.filter(r => r.x.val && !r.x.falta && r.fx !== 'v').sort((a, b) => alfaProd(a.produto, b.produto) || alfaLoja(a, b));
+      VAL.verdes = VAL.todos.filter(r => r.x.val && !r.x.falta && r.fx === 'v').sort((a, b) => alfaProd(a.produto, b.produto) || alfaLoja(a, b));
       VAL.em = Date.now();
     } catch (e) { toast(erroMsg(e)); } finally { VAL.carregando = null; }
   })();
   return VAL.carregando;
 }
 const lojaDe = r => { const l = S.lojas.find(y => y.id === r.v.lojaId) || {}; return { cod: String(r.v.codigo || l.codigo || ''), nome: r.v.lojaNome || l.nome || '', cid: l.municipio || r.v.cidade || '' }; };
+// faixas de validade por produto (Configurações › Pesquisa de preço): abaixo de "verm" dias = vermelho; abaixo de "amar" = amarelo; senão verde
+const limVal = q => { const c = S.valCfg || {}, p = c.padrao || {}, e = (c.itens || {})[String(q || '').replace(/[.~*/\[\]]/g, '_')] || {}; const verm = +e.verm || +p.verm || 7; return { verm, amar: Math.max(verm, +e.amar || +p.amar || 10) }; };
+const faixaV = (n, q) => n == null ? null : n < limVal(q).verm ? 'r' : n < limVal(q).amar ? 'a' : 'v';
+const corV = f => f === 'r' ? 'var(--crit)' : f === 'a' ? '#9A6B00' : '#1E7A44';
 const faltamTxt = n => n < 0 ? `vencido há ${-n} dia${n < -1 ? 's' : ''}` : n === 0 ? 'vence hoje' : `faltam ${n} dia${n > 1 ? 's' : ''}`;
 function filtraPV(L, semTexto) {
   const f = VAL.f; const t = semTexto ? '' : semAcento(f.prod.trim());
@@ -587,8 +591,8 @@ const celPV = () => window.innerWidth < 760;
 const nomeProd = p => p.replace(/^\d+\s*-\s*/, '');
 const alfaProd = (a, b) => nomeProd(a).localeCompare(nomeProd(b), 'pt-BR');
 const alfaLoja = (a, b) => lojaDe(a).nome.localeCompare(lojaDe(b).nome, 'pt-BR') || lojaDe(a).cod.localeCompare(lojaDe(b).cod);
-const corFaixa = r => r.x.falta ? 'var(--crit)' : r.faltam == null ? 'var(--line)' : r.faltam < 7 ? 'var(--crit)' : r.faltam < 10 ? '#E0A800' : '#2E9D5B';
-const valTxt = r => { if (!r.x.val || r.x.falta) return ''; const n = r.faltam; const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; return `<b style="color:${cor}">val. ${dataBR(r.x.val).slice(0, 5)} · ${faltamTxt(n)}</b>`; };
+const corFaixa = r => r.x.falta ? 'var(--crit)' : r.faltam == null ? 'var(--line)' : r.fx === 'r' ? 'var(--crit)' : r.fx !== 'v' ? '#E0A800' : '#2E9D5B';
+const valTxt = r => { if (!r.x.val || r.x.falta) return ''; const n = r.faltam; const cor = corV(r.fx); return `<b style="color:${cor}">val. ${dataBR(r.x.val).slice(0, 5)} · ${faltamTxt(n)}</b>`; };
 const precoTxt = r => r.x.falta ? '<b style="color:var(--crit)">RUPTURA</b>' : typeof r.x.preco === 'number' ? `<b>${brl(r.x.preco)}</b>` : '';
 // produto que abre (acordeão) e mostra as lojas logo abaixo, sem tela por cima
 const produtoPV = (titulo, linhas, cor, produto, modo, faixa) => `<details class="pv-li pv-prodbox" style="border-left-color:${cor || 'var(--line)'}" data-p="${h(produto)}" data-modo="${modo}" data-fx="${faixa || ''}"><summary><div class="pv-t">${titulo}</div>${linhas.filter(Boolean).map(l => `<div class="pv-s">${l}</div>`).join('')}</summary><div class="pv-corpo"></div></details>`;
@@ -598,7 +602,7 @@ let rzPV = null; window.addEventListener('resize', () => { clearTimeout(rzPV); r
 function tabelaLojasProduto(rs) {
   if (celPV()) return `<div class="pv-lista">${rs.slice().sort(alfaLoja).map(r => { const lj = lojaDe(r);
     return liPV(`${h(lj.cod)} · ${h(lj.nome)} <span class="muted" style="font-weight:500">· ${h(lj.cid)}</span>`, [[precoTxt(r), valTxt(r), r.x.qtd != null && !r.x.falta ? `${r.x.qtd} un a vender` : ''].filter(Boolean).join(' · '), `${h(promNome(r.v.promotorId))} · ${dataBR(r.d).slice(0, 5)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}`], corFaixa(r)); }).join('')}</div>`;
-  return `<div style="overflow-x:auto"><table class="num pv-tab"><thead><tr><th>Loja (cliente)</th><th class="r">Preço de ponta</th><th>Validade</th><th class="r">Qtd a vender</th><th>Promotor</th><th>Data da pesquisa</th></tr></thead><tbody>${rs.slice().sort(alfaLoja).map(r => { const lj = lojaDe(r); const n = r.faltam; const cor = r.x.falta || n == null ? '' : n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; const fundo = r.x.falta || n == null ? '' : n < 7 ? '#FDECEC' : n < 10 ? '#FFF6D6' : '#E9F7EF';
+  return `<div style="overflow-x:auto"><table class="num pv-tab"><thead><tr><th>Loja (cliente)</th><th class="r">Preço de ponta</th><th>Validade</th><th class="r">Qtd a vender</th><th>Promotor</th><th>Data da pesquisa</th></tr></thead><tbody>${rs.slice().sort(alfaLoja).map(r => { const lj = lojaDe(r); const n = r.faltam; const cor = r.x.falta || n == null ? '' : corV(r.fx); const fundo = r.x.falta || n == null ? '' : n < 7 ? '#FDECEC' : n < 10 ? '#FFF6D6' : '#E9F7EF';
     return `<tr><td><b>${h(lj.cod)}</b> · ${h(lj.nome)}<div class="muted" style="font-size:.85em">${h(lj.cid)}</div></td><td class="r"><b>${r.x.falta ? '<span style="color:var(--crit)">ruptura</span>' : typeof r.x.preco === 'number' ? brl(r.x.preco) : '—'}</b></td>
       <td style="white-space:nowrap;background:${fundo};color:${cor}">${r.x.val && !r.x.falta ? `<b>${dataBR(r.x.val)}</b><div style="font-size:.85em">${faltamTxt(n)}</div>` : '—'}</td><td class="r">${r.x.qtd != null && !r.x.falta ? r.x.qtd + ' un' : '—'}</td><td>${h(promNome(r.v.promotorId))}</td><td style="white-space:nowrap">${dataBR(r.d)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
 }
@@ -612,7 +616,7 @@ function dadosLoja(r) { // endereço e dados do cliente (abre ao tocar no nome)
 function linhasModo(r, modo) {
   const lj = lojaDe(r); const tit = `${h(lj.cod)} · ${h(lj.nome)} <span class="muted" style="font-weight:500">· ${h(lj.cid)}</span>`; const quando = `pesquisa ${dataBR(r.d).slice(0, 5)}${r.v.checkin ? ' ' + hm(r.v.checkin) : ''}`;
   let info, cor;
-  if (modo === 'val') { const n = r.faltam; const c = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; cor = corFaixa(r);
+  if (modo === 'val') { const n = r.faltam; const c = corV(r.fx); cor = corFaixa(r);
     info = `<span class="pv-dest" style="color:${c}">val. ${dataBR(r.x.val).slice(0, 5)} · ${faltamTxt(n)}</span>${r.x.qtd != null ? ` <span class="pv-dest2">${r.x.qtd} un a vender</span>` : ''}`; }
   else if (modo === 'pq') { cor = r._cor || 'var(--line)'; info = `<span class="pv-dest" style="color:${r._cor || 'var(--ink)'}">${brl(r.x.preco)}</span>${r._tag ? ` <span class="pv-tag" style="background:${r._cor}">${r._tag}</span>` : ''}`; }
   else { cor = 'var(--crit)'; info = '<span class="pv-dest" style="color:var(--crit)">ruptura</span>'; }
@@ -623,9 +627,9 @@ function lojasProdutoHTML(produto, modo, faixa) {
   let rs = filtraPV((VAL.todos || []).filter(r => r.produto === produto), true);
   let cab = '';
   if (modo === 'val') {
-    rs = rs.filter(r => r.x.val && !r.x.falta && (faixa === 'r' ? r.faltam < 7 : faixa === 'a' ? r.faltam >= 7 && r.faltam < 10 : faixa === 'v' ? r.faltam >= 10 : true)).sort((a, b) => a.faltam - b.faltam || alfaLoja(a, b));
+    rs = rs.filter(r => r.x.val && !r.x.falta && (faixa === 'r' ? r.fx === 'r' : faixa === 'a' ? r.fx === 'a' : faixa === 'v' ? r.fx === 'v' : true)).sort((a, b) => a.faltam - b.faltam || alfaLoja(a, b));
     const q = rs.reduce((s, r) => s + (+r.x.qtd || 0), 0);
-    cab = `${rs.length} loja${rs.length === 1 ? '' : 's'} ${faixa === 'r' ? 'com menos de 7 dias' : faixa === 'a' ? 'com 7 a 9 dias' : 'com 10 dias ou mais'}${q ? ` · <b>${q} un a vender</b>` : ''}`;
+    cab = `${rs.length} loja${rs.length === 1 ? '' : 's'} ${faixa === 'r' ? 'no vermelho' : faixa === 'a' ? 'no amarelo' : 'no verde'}${q ? ` · <b>${q} un a vender</b>` : ''}`;
   } else if (modo === 'pq') {
     rs = rs.filter(r => !r.x.falta && typeof r.x.preco === 'number').sort(alfaLoja);
     const pr = rs.map(r => r.x.preco); const mn = Math.min(...pr), mx = Math.max(...pr), md = pr.reduce((s, x) => s + x, 0) / (pr.length || 1);
@@ -646,7 +650,7 @@ function desenhaPV() {
   const proms = [...new Set(T.map(r => r.v.promotorId))].sort((a, b) => promNome(a).localeCompare(promNome(b)));
   $('#vf-loja').innerHTML = `<option value="">Todas as lojas (${lojas.length})</option>` + lojas.map(([id, l]) => `<option value="${h(id)}" ${VAL.f.loja === id ? 'selected' : ''}>${h(l.cod)} · ${h(l.nome)} · ${h(l.cid)}</option>`).join('');
   $('#vf-prom').innerHTML = `<option value="">Todos os promotores</option>` + proms.map(p => `<option value="${h(p)}" ${VAL.f.prom === p ? 'selected' : ''}>${h(promNome(p))}</option>`).join('');
-  const opSo = VAL.aba === 'val' ? [['', 'Todas as faixas'], ['r', 'Só vermelho (< 7 dias)'], ['a', 'Só amarelo (7 a 9 dias)'], ['ra', 'Vermelho e amarelo'], ['v', 'Só verde (10 dias ou mais)']] : null;
+  const opSo = VAL.aba === 'val' ? [['', 'Todas as faixas'], ['r', 'Só vermelho'], ['a', 'Só amarelo'], ['ra', 'Vermelho e amarelo'], ['v', 'Só verde']] : null;
   $('#vf-so').hidden = !opSo; if (!opSo) VAL.f.so = '';
   if (opSo) $('#vf-so').innerHTML = opSo.map(([k, t]) => `<option value="${k}" ${VAL.f.so === k ? 'selected' : ''}>${t}</option>`).join('');
   box.className = 'stack';
@@ -656,10 +660,10 @@ function desenhaPV() {
   if (VAL.aba === 'val') {
     // só o produto; clicando, as lojas daquela faixa
     const L = filtraPV((VAL.todos || []).filter(r => r.x.val && !r.x.falta));
-    const fx = [['r', '🔴 Menos de 7 dias · data apertada', 'var(--crit)', r => r.faltam < 7], ['a', '🟡 De 7 a 9 dias', '#9A6B00', r => r.faltam >= 7 && r.faltam < 10], ['v', '🟢 10 dias ou mais · validade boa', '#1E7A44', r => r.faltam >= 10]];
+    const fx = [['r', '🔴 Vermelho · data apertada', 'var(--crit)', r => r.fx === 'r'], ['a', '🟡 Amarelo · atenção', '#9A6B00', r => r.fx === 'a'], ['v', '🟢 Verde · validade boa', '#1E7A44', r => r.fx === 'v']];
     const mostra = k => !so || so === k || (so === 'ra' && k !== 'v');
     const conta = fx.map(([k, , , f]) => L.filter(f));
-    box.innerHTML = `<div class="kpis num">${fx.map(([k, t, cor], i) => `<div class="kpi"><b style="color:${cor}">${grupo(conta[i]).length}</b><span>${k === 'r' ? 'Produtos com menos de 7 dias' : k === 'a' ? 'Produtos com 7 a 9 dias' : 'Produtos com 10 dias ou mais'}</span></div>`).join('')}</div>
+    box.innerHTML = `<div class="kpis num">${fx.map(([k, t, cor], i) => `<div class="kpi"><b style="color:${cor}">${grupo(conta[i]).length}</b><span>${k === 'r' ? 'Produtos no vermelho' : k === 'a' ? 'Produtos no amarelo' : 'Produtos no verde'}</span></div>`).join('')}</div>
       ${fx.map(([k, t, cor], i) => mostra(k) ? `<div class="card stack" style="border-left:5px solid ${cor}"><h3 style="color:${cor}">${t}</h3>${lista(grupo(conta[i]).map(([p, rs]) => { const q = rs.reduce((s, r) => s + (+r.x.qtd || 0), 0); return produtoPV(`${h(p)} <span class="muted pv-seta">›</span>`, [`${rs.length} loja${rs.length > 1 ? 's' : ''}${k !== 'v' && q ? ` · <b style="color:${cor}">${q} un a vender</b>` : ''} · mais próxima ${dataBR(rs.map(r => r.x.val).sort()[0]).slice(0, 5)}`], cor, p, 'val', k); }), 'Nenhum produto nesta faixa.')}</div>` : '').join('')}
       <div class="muted" style="font-size:12.5px">Toque no produto para abrir as lojas daquela faixa logo abaixo; toque no cliente para ver o endereço, com a validade e a quantidade a vender.</div>`;
   } else if (VAL.aba === 'pq') {
@@ -687,7 +691,7 @@ function ligaCsv() {
     const pv = VAL.aba === 'val';
     let L = pv ? filtraPV((VAL.cache || []).concat(VAL.verdes || [])) : filtraPV(T.filter(r => r.x.falta || typeof r.x.preco === 'number'));
     const linhas = [pv ? ['Faixa', 'Validade', 'Dias', 'Qtd a vender', 'Produto', 'Cód. loja', 'Loja', 'Cidade', 'Promotor', 'Visto em'] : ['Cód. loja', 'Loja', 'Cidade', 'Produto', 'Preço', 'Ruptura', 'Validade', 'Qtd', 'Promotor', 'Data']]
-      .concat(L.map(r => { const lj = lojaDe(r); return pv ? [r.faltam < 7 ? 'VERMELHO' : r.faltam < 10 ? 'AMARELO' : 'VERDE', dataBR(r.x.val), r.faltam, r.x.qtd || '', r.produto, lj.cod, lj.nome, lj.cid, promNome(r.v.promotorId), dataBR(r.d)]
+      .concat(L.map(r => { const lj = lojaDe(r); return pv ? [r.fx === 'r' ? 'VERMELHO' : r.fx !== 'v' ? 'AMARELO' : 'VERDE', dataBR(r.x.val), r.faltam, r.x.qtd || '', r.produto, lj.cod, lj.nome, lj.cid, promNome(r.v.promotorId), dataBR(r.d)]
         : [lj.cod, lj.nome, lj.cid, r.produto, r.x.falta ? '' : String(r.x.preco).replace('.', ','), r.x.falta ? 'SIM' : '', r.x.val ? dataBR(r.x.val) : '', r.x.qtd || '', promNome(r.v.promotorId), dataBR(r.d)]; }));
     const txt = '﻿' + linhas.map(l => l.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = `${pv ? 'Validades' : 'Pesquisa de preco'} ${dataHoje()}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -969,7 +973,7 @@ async function gravaLocalLoja(loja, v, date, id, saida) {
 // Quadros do alto da Torre: abrem a lista do que está por trás do número
 function kpiValidade() {
   if (!VAL.todos) return '<b>…</b><span>Validades e pesquisa de preço ›</span>';
-  const v = VAL.cache || []; const r = v.filter(x => x.faltam < 7).length, a = v.length - r, g = (VAL.verdes || []).length;
+  const v = VAL.cache || []; const r = v.filter(x => x.fx === 'r').length, a = v.length - r, g = (VAL.verdes || []).length;
   return `<b><span style="color:var(--crit)">${r}</span><small> 🔴</small> <span style="color:#9A6B00">${a}</span><small> 🟡</small> <span style="color:#1E7A44">${g}</span><small> 🟢</small></b><span>Validades · ${VAL.todos.filter(x => typeof x.x.preco === 'number').length} preços pesquisados ›</span>`;
 }
 function irPara(tab) { const b = document.querySelector(`.side-item[data-go="${tab}"]`); if (b) b.click(); }
@@ -1061,8 +1065,8 @@ async function detalheVisita(date, id, vInfo) {
        const ck = q => q.replace(/[.~*/\[\]]/g, '_'); const P = v.precos || {}; const atuais = new Map(S.pesquisa.map(q => [ck(q), q]));
        const resp = Object.keys(P).filter(k => P[k]).map(k => [atuais.get(k) || k, P[k]]);
        const rup = resp.filter(([, x]) => x.falta).length, npr = resp.filter(([, x]) => !x.falta && typeof x.preco === 'number').length; const nInf = S.pesquisa.filter(q => !P[ck(q)]).length;
-       const vtag = x => { if (!x.val || x.falta) return ''; const n = Math.round((new Date(x.val + 'T12:00:00') - new Date(date + 'T12:00:00')) / 864e5); const cor = n < 7 ? 'var(--crit)' : n < 10 ? '#9A6B00' : '#1E7A44'; return `<div style="font-size:12px;font-weight:600;color:${cor}">validade ${x.val.split('-').reverse().join('/')} (${n < 0 ? 'vencido' : n + ' dia' + (n === 1 ? '' : 's')})</div>`; };
-       return `<div><div class="label">Pesquisa de preço · ${npr} preço(s) · ${rup} ruptura(s)${nInf ? ` · ${nInf} não informado(s)` : ''}</div>${resp.length ? resp.map(([q, x]) => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px"><span style="min-width:0">${h(q)}</span><span style="text-align:right"><b class="num" style="white-space:nowrap">${x.falta ? '<span style="color:var(--crit)">ruptura</span>' : typeof x.preco === 'number' ? brl(x.preco) : '<span class="muted">sem preço</span>'}</b>${vtag(x)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">Nenhum item lançado nesta visita.</div>'}</div>`;
+       const vtag = (x, q) => { if (!x.val || x.falta) return ''; const n = Math.round((new Date(x.val + 'T12:00:00') - new Date(date + 'T12:00:00')) / 864e5); const cor = corV(faixaV(n, q)); return `<div style="font-size:12px;font-weight:600;color:${cor}">validade ${x.val.split('-').reverse().join('/')} (${n < 0 ? 'vencido' : n + ' dia' + (n === 1 ? '' : 's')})</div>`; };
+       return `<div><div class="label">Pesquisa de preço · ${npr} preço(s) · ${rup} ruptura(s)${nInf ? ` · ${nInf} não informado(s)` : ''}</div>${resp.length ? resp.map(([q, x]) => `<div class="spread" style="padding:6px 0;border-bottom:1px solid var(--line);gap:8px"><span style="min-width:0">${h(q)}</span><span style="text-align:right"><b class="num" style="white-space:nowrap">${x.falta ? '<span style="color:var(--crit)">ruptura</span>' : typeof x.preco === 'number' ? brl(x.preco) : '<span class="muted">sem preço</span>'}</b>${vtag(x, q)}</span></div>`).join('') : '<div class="muted" style="font-size:13px">Nenhum item lançado nesta visita.</div>'}</div>`;
      })()}
      ${v.obs ? `<div><div class="label">Observações</div><div style="white-space:pre-wrap">${h(v.obs)}</div></div>` : ''}
      <div><div class="label">Fotos</div><div id="md-fotos" class="stack muted">Carregando fotos…</div></div>`}`);
@@ -1939,7 +1943,14 @@ function renderConfig() {
       <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="cf-prop" ${S.regras.prop ? 'checked' : ''}> Premiação de trocas proporcional ao faturamento</label>
       ${quadroPremiacao()}
       <div><button class="btn primary" id="cf-salvar">Salvar</button></div></div>
-    <div class="card stack"><h3>Pesquisa de preço</h3><p class="muted" style="margin:0;font-size:14px">Produtos que o promotor pesquisa em toda visita (um por linha). Obrigatório para o check-out.</p><textarea id="cf-pesq" rows="4">${h(S.pesquisa.join('\n'))}</textarea><div><button class="btn primary" id="cf-pesq-s">Salvar pesquisa</button></div></div>
+    <div class="card stack"><h3>Pesquisa de preço</h3><p class="muted" style="margin:0;font-size:14px">Produtos que o promotor pesquisa em toda visita (um por linha). Obrigatório para o check-out.</p><textarea id="cf-pesq" rows="4">${h(S.pesquisa.join('\n'))}</textarea><div><button class="btn primary" id="cf-pesq-s">Salvar pesquisa</button></div>
+      ${(() => { const c = S.valCfg || {}, pd = c.padrao || {}, it = c.itens || {}; const ck = q => q.replace(/[.~*/\[\]]/g, '_'); const pv = +pd.verm || 7, pa = +pd.amar || 10;
+        return `<details class="val-cfg"${Object.keys(it).length ? '' : ''}><summary><b>Alertas de validade</b> · padrão: vermelho abaixo de ${pv} dias, amarelo abaixo de ${pa} dias${Object.keys(it).length ? ` · ${Object.keys(it).length} produto(s) com limite próprio` : ''}</summary>
+        <p class="muted" style="margin:8px 0;font-size:13px">Quantos dias até o vencimento geram alerta. Ex.: vermelho abaixo de 7 e amarelo abaixo de 10 → 6 dias ou menos fica vermelho, 7 a 9 amarelo, 10 ou mais verde. No amarelo e no vermelho o app pede ao promotor a quantidade a vender. Deixe o produto em branco para usar o padrão.</p>
+        <div class="row" style="gap:10px;flex-wrap:wrap;align-items:end"><label class="field" style="width:170px"><span>Padrão: vermelho abaixo de (dias)</span><input type="number" min="0" max="365" id="cv-pv" value="${pv}"></label><label class="field" style="width:170px"><span>Padrão: amarelo abaixo de (dias)</span><input type="number" min="0" max="365" id="cv-pa" value="${pa}"></label></div>
+        <div style="overflow-x:auto;margin-top:8px"><table class="num"><thead><tr><th>Produto</th><th class="r">🔴 abaixo de</th><th class="r">🟡 abaixo de</th></tr></thead><tbody>
+        ${S.pesquisa.map((q, i) => { const e = it[ck(q)] || {}; return `<tr><td>${h(q)}</td><td class="r"><input type="number" min="0" max="365" data-cvv="${i}" value="${e.verm || ''}" placeholder="${pv}" style="width:70px"></td><td class="r"><input type="number" min="0" max="365" data-cva="${i}" value="${e.amar || ''}" placeholder="${pa}" style="width:70px"></td></tr>`; }).join('')}
+        </tbody></table></div><div style="margin-top:8px"><button class="btn primary" id="cv-s">Salvar alertas de validade</button></div></details>`; })()}</div>
     <div class="card stack"><h3>Jornada e banco de horas</h3><p class="muted" style="margin:0;font-size:14px">Carga prevista por dia (horas:minutos). O banco de horas compara com o trabalhado.</p>
       <div class="cargas">${[1, 2, 3, 4, 5, 6, 0].map(d => `<label class="field"><span>${DIAS[d]}</span><input type="text" data-cg="${d}" inputmode="numeric" value="${hmin(regrasJornada(S.empresa).carga[d]).replace('h', ':')}"></label>`).join('')}</div>
       <div class="row" style="gap:10px"><label class="field" style="flex:1"><span>Almoço descontado (minutos)</span><input type="number" id="cf-alm" min="0" step="15" value="${regrasJornada(S.empresa).almocoMin}"></label>
@@ -1989,7 +2000,17 @@ function renderConfig() {
         <div style="font-size:13px">No GitHub, abra o repositório <b>novapenedo</b> → <b>Settings</b> → <b>Secrets and variables</b> → <b>Actions</b> → <b>New repository secret</b> e crie dois: <b>MONITOR_EMAIL</b> com o e-mail e <b>MONITOR_SENHA</b> com a senha.</div></div>`;
     } catch (e) { box.innerHTML = `<div class="note crit">${h(String(e.code).includes('permission') ? 'O banco recusou: publique as regras novas do Firebase (bloco "monitores").' : erroMsg(e))}</div>`; }
   };
-  $('#cf-pesq-s').onclick = () => { const itens = $('#cf-pesq').value.split('\n').map(x => x.trim()).filter(Boolean); if (!itens.length) return toast('Informe pelo menos um produto.'); setDoc(doc(db, 'config', 'pesquisa'), { itens }).then(() => toast('Pesquisa salva'), e => toast(erroMsg(e))); };
+  $('#cf-pesq-s').onclick = () => { const itens = $('#cf-pesq').value.split('\n').map(x => x.trim()).filter(Boolean); if (!itens.length) return toast('Informe pelo menos um produto.'); setDoc(doc(db, 'config', 'pesquisa'), { itens }, { merge: true }).then(() => toast('Pesquisa salva'), e => toast(erroMsg(e))); };
+  { const bs = $('#cv-s'); if (bs) bs.onclick = () => {
+    const ck = q => q.replace(/[.~*/\[\]]/g, '_'); const num = el => el && el.value.trim() !== '' ? Math.round(+el.value) : null;
+    const pv = num($('#cv-pv')), pa = num($('#cv-pa'));
+    if (pv == null || pa == null || pv < 0 || pa < pv) return toast('Padrão inválido: o amarelo precisa ser igual ou maior que o vermelho.');
+    const itens = {}; let erro = '';
+    S.pesquisa.forEach((q, i) => { const v = num(document.querySelector(`[data-cvv="${i}"]`)), a = num(document.querySelector(`[data-cva="${i}"]`)); if (v == null && a == null) return;
+      const vv = v == null ? pv : v, aa = a == null ? Math.max(pa, vv) : a; if (vv < 0 || aa < vv) { erro = q; return; } itens[ck(q)] = { verm: vv, amar: aa }; });
+    if (erro) return toast(`Confira ${erro.replace(/^\d+ - /, '')}: o amarelo precisa ser igual ou maior que o vermelho.`, 6000);
+    updateDoc(doc(db, 'config', 'pesquisa'), { validade: { padrao: { verm: pv, amar: pa }, itens, atualizado: Date.now() } }).then(() => toast('Alertas de validade salvos. O app e os relatórios já usam os novos limites.'), e => toast(erroMsg(e)));
+  }; }
   $('#cf-jor-s').onclick = () => {
     const carga = {}; let erro = false;
     document.querySelectorAll('[data-cg]').forEach(i => { const m = i.value.trim().match(/^(\d{1,2})(?:[:h](\d{1,2}))?$/); if (!m) erro = true; else carga[i.dataset.cg] = +m[1] * 60 + (+m[2] || 0); });

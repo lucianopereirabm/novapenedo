@@ -9,7 +9,7 @@ import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } fr
 import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco, janelaMarcada } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho, VERSAO_ALMOCO, termoAlmoco } from './termos.js';
 
-export const VERSAO_APP = '2026-11-17.1';
+export const VERSAO_APP = '2026-11-18.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -278,7 +278,7 @@ function abreApp() {
   S.unsub.push(onSnapshot(doc(db, 'promotores', S.pid), s => { S.prom = s.exists() ? s.data() : { nome: 'Promotor' };
     $('#quem').innerHTML = S.prom.espelhoDe ? `<b style="color:#F4BC1C">MODO TESTE</b>` : `Olá<b>${h(S.prom.nome.split(' ')[0])}</b>`;
     assinaLojas(S.prom.espelhoDe || S.pid); render(); }));
-  S.unsub.push(onSnapshot(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.pesquisa = (Array.isArray(it) && it.length ? it : PESQ_PADRAO).slice().sort((x, y) => x.replace(/^\d+\s*-\s*/, '').localeCompare(y.replace(/^\d+\s*-\s*/, ''), 'pt-BR')); if (S.visita) renderVisita(); }, () => {}));
+  S.unsub.push(onSnapshot(doc(db, 'config', 'pesquisa'), s => { const it = s.exists() && s.data().itens; S.valCfg = (s.exists() && s.data().validade) || null; S.pesquisa = (Array.isArray(it) && it.length ? it : PESQ_PADRAO).slice().sort((x, y) => x.replace(/^\d+\s*-\s*/, '').localeCompare(y.replace(/^\d+\s*-\s*/, ''), 'pt-BR')); if (S.visita) renderVisita(); }, () => {}));
   S.unsub.push(onSnapshot(doc(db, 'config', 'checklist'), s => { const it = s.exists() && s.data().itens; S.checklist = Array.isArray(it) && it.length ? it : CHECK_PADRAO; if (S.visita) renderVisita(); }, () => {}));
   // termo do almoço (30 min ou 1h): sem ele o app não libera a rota
   S.unsub.push(onSnapshot(query(collection(db, 'termos'), where('promotorId', '==', S.pid)), { includeMetadataChanges: true }, s => {
@@ -325,10 +325,10 @@ function proximoPasso(origem) {
     if (!S.visita) return; const v = S.vis[S.visita.id]; if (!v || v.status !== 'em_loja') return;
     const falta = ['antes', 'depois'].find(t => !S.fotos.some(x => x.tipo === t));
     // quem está lançando a pesquisa continua nela (não sobe para as fotos): a foto "depois" normalmente fica para o fim
-    const pesqPendente = S.pesquisa.some(q => !precoRespondido((v.precos || {})[chaveQ(q)]));
+    const pesqPendente = S.pesquisa.some(q => !precoRespondido((v.precos || {})[chaveQ(q)], q));
     if (falta && !(origem === 'pq' && pesqPendente)) { const b = document.querySelector(`[data-tirar="${falta}"]`); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
     // pesquisa: continua do produto em que o promotor está (nunca volta para o topo da lista)
-    const P = v.precos || {}; const resp = k => precoRespondido(P[chaveQ(S.pesquisa[k])]);
+    const P = v.precos || {}; const resp = k => precoRespondido(P[chaveQ(S.pesquisa[k])], S.pesquisa[k]);
     const visivel = k => { const el = document.querySelector(`[data-pq="${k}"]`); return el && !el.closest('.pp-item[hidden]'); };
     const centra = el => { if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); try { el.focus({ preventScroll: true }); } catch (e) {} };
     const cur = S.pqAtual;
@@ -763,7 +763,7 @@ async function checkout() {
   if (semFoto.length) { toast('Para fazer check-out, tire a foto: gôndola ' + semFoto.join(' e ') + '.', 5000); $('#v-fotos').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   document.querySelectorAll('#v-pp [data-pq]').forEach(inp => salvaPreco(inp, false)); // grava o que foi digitado e ainda não foi salvo
   const v2 = S.vis[V.id] || v;
-  const semPreco = S.pesquisa.filter(q => !precoRespondido((v2.precos || {})[chaveQ(q)]));
+  const semPreco = S.pesquisa.filter(q => !precoRespondido((v2.precos || {})[chaveQ(q)], q));
   if (semPreco.length) { // pesquisa obrigatória: cada produto com Ruptura, ou preço + validade
     const i = S.pesquisa.indexOf(semPreco[0]); const inp = document.querySelector(`[data-pq="${i}"]`);
     const bx = $('#pp-busca'); if (bx && bx.value) { bx.value = ''; bx.oninput({ target: bx }); }
@@ -847,9 +847,11 @@ function salvaFotos(lista) {
 /* ---------- pesquisa de preço ---------- */
 const chaveQ = q => q.replace(/[.~*/\[\]]/g, '_');
 // item completo: Ruptura, ou preço de ponta + validade (a quantidade é opcional)
-// validade com menos de 10 dias (alerta) exige também a quantidade a vender
-const precisaQtd = x => !!x && !x.falta && !!x.val && diasAte(x.val) < 10;
-const precoRespondido = x => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0 && !!x.val && (!precisaQtd(x) || (x.qtd != null && x.qtd >= 0))));
+// limites de validade por produto (configuráveis na Gestão): abaixo de "verm" dias = vermelho; abaixo de "amar" = amarelo
+// validade no amarelo ou vermelho exige também a quantidade a vender
+const limVal = q => { const c = S.valCfg || {}, p = c.padrao || {}, e = (c.itens || {})[chaveQ(q || '')] || {}; const verm = +e.verm || +p.verm || 7; return { verm, amar: Math.max(verm, +e.amar || +p.amar || 10) }; };
+const precisaQtd = (x, q) => !!x && !x.falta && !!x.val && diasAte(x.val) < limVal(q).amar;
+const precoRespondido = (x, q) => !!x && (x.falta === true || (typeof x.preco === 'number' && x.preco >= 0 && !!x.val && (!precisaQtd(x, q) || (x.qtd != null && x.qtd >= 0))));
 const brl2 = n => n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Lê o campo de preço e grava (só se mudou). avancar = leva para o próximo item.
 function salvaPreco(inp, avancar) {
@@ -862,13 +864,13 @@ function salvaPreco(inp, avancar) {
   if (!(atual && atual.preco === val)) atualiza({ precos: { [q]: Object.assign({}, atual && !atual.falta ? atual : {}, { preco: val, ts: Date.now() }) } });
   if (avancar) proximoPasso('pq');
 }
-// validade: menos de 10 dias = amarelo; menos de 7 = vermelho
+// validade: cores conforme os limites do produto (limVal)
 const diasAte = d => Math.round((new Date(d + 'T12:00:00') - new Date(S.hoje + 'T12:00:00')) / 864e5);
-const corVal = d => { if (!d) return ''; const n = diasAte(d); return n < 7 ? 'crit' : n < 10 ? 'warn' : 'ok'; };
+const corVal = (d, q) => { if (!d) return ''; const n = diasAte(d), L = limVal(q); return n < L.verm ? 'crit' : n < L.amar ? 'warn' : 'ok'; };
 const txtVal = d => { if (!d) return ''; const n = diasAte(d); return n < 0 ? `vencido há ${-n} dia${n < -1 ? 's' : ''}` : n === 0 ? 'vence hoje' : `vence em ${n} dia${n > 1 ? 's' : ''}`; };
 // itens já respondidos somem da lista (ficam só os que faltam); "Ver lançados" mostra todos para conferir ou corrigir
 function marcaFeitos(box, resp) {
-  let ok = 0; S.pesquisa.forEach((q, i) => { const it = box.querySelector(`[data-pq="${i}"]`); const f = precoRespondido(resp[chaveQ(q)]); if (f) ok++; if (it) it.closest('.pp-item').classList.toggle('feito', f); });
+  let ok = 0; S.pesquisa.forEach((q, i) => { const it = box.querySelector(`[data-pq="${i}"]`); const f = precoRespondido(resp[chaveQ(q)], q); if (f) ok++; if (it) it.closest('.pp-item').classList.toggle('feito', f); });
   const falta = S.pesquisa.length - ok; const t = box.querySelector('#pp-topo');
   if (t) t.innerHTML = falta ? `<span><b>Faltam ${falta}</b> de ${S.pesquisa.length}</span>${ok ? `<button class="btn sm ghost" id="pp-ver" type="button">${box.classList.contains('ver-todos') ? 'Esconder lançados' : `Ver lançados (${ok})`}</button>` : ''}`
     : `<span style="color:var(--ok)"><b>✅ Pesquisa completa</b> · ${ok} itens</span><button class="btn sm ghost" id="pp-ver" type="button">${box.classList.contains('ver-todos') ? 'Esconder lançados' : 'Ver / corrigir'}</button>`;
@@ -876,7 +878,7 @@ function marcaFeitos(box, resp) {
 }
 function renderPesquisa(v) {
   const box = $('#v-pp');
-  { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)])).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
+  { const r = v.precos || {}, ok = S.pesquisa.filter(q => precoRespondido(r[chaveQ(q)], q)).length; $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`; }
   const resp = v.precos || {}; const pode = v.status === 'em_loja';
   // já montado para esta visita: só atualiza no lugar (não recria os campos — senão perde o que está sendo digitado)
   const chave = (S.visita && S.visita.id) + '|' + S.pesquisa.join('|');
@@ -884,8 +886,8 @@ function renderPesquisa(v) {
     S.pesquisa.forEach((q, i) => { const x = resp[chaveQ(q)] || {}; const inp = box.querySelector(`[data-pq="${i}"]`), bt = box.querySelector(`[data-pf="${i}"]`); if (!inp) return;
       if (document.activeElement !== inp) { const novo = typeof x.preco === 'number' ? brl2(x.preco) : (x.falta ? '' : inp.value); if (inp.value !== novo) inp.value = novo; }
       inp.disabled = !pode || !!x.falta; inp.parentElement.classList.toggle('off', !!x.falta); bt.setAttribute('aria-pressed', String(!!x.falta)); bt.disabled = !pode;
-      const qt = box.querySelector(`[data-pqt="${i}"]`); if (qt) { if (document.activeElement !== qt) qt.value = x.qtd != null ? x.qtd : ''; qt.disabled = !pode || !!x.falta; qt.closest('.pp-val').classList.toggle('off', !!x.falta); qt.closest('.pp-val').hidden = !precisaQtd(x); }
-      const vd = box.querySelector(`[data-pv="${i}"]`); if (vd) { if (document.activeElement !== vd) vd.value = x.val || ''; vd.disabled = !pode || !!x.falta; const w = vd.closest('.pp-val'); w.className = 'pp-val ' + corVal(x.val) + (x.falta ? ' off' : ''); w.querySelector('small').textContent = txtVal(x.val); } });
+      const qt = box.querySelector(`[data-pqt="${i}"]`); if (qt) { if (document.activeElement !== qt) qt.value = x.qtd != null ? x.qtd : ''; qt.disabled = !pode || !!x.falta; qt.closest('.pp-val').classList.toggle('off', !!x.falta); qt.closest('.pp-val').hidden = !precisaQtd(x, q); }
+      const vd = box.querySelector(`[data-pv="${i}"]`); if (vd) { if (document.activeElement !== vd) vd.value = x.val || ''; vd.disabled = !pode || !!x.falta; const w = vd.closest('.pp-val'); w.className = 'pp-val ' + corVal(x.val, q) + (x.falta ? ' off' : ''); w.querySelector('small').textContent = txtVal(x.val); } });
     marcaFeitos(box, resp);
     return;
   }
@@ -893,15 +895,15 @@ function renderPesquisa(v) {
   box.innerHTML = '<div class="pp-topo" id="pp-topo"></div>' + S.pesquisa.map((q, i) => { const x = resp[chaveQ(q)] || {};
     return `<div class="pp-item"><span class="pp-nome">${h(q)}</span><div class="pp-ctl">
       <div class="pp-preco ${x.falta ? 'off' : ''}"><span>R$</span><input type="text" inputmode="numeric" pattern="[0-9]*" data-pq="${i}" placeholder="0,00" value="${typeof x.preco === 'number' ? brl2(x.preco) : ''}" ${!pode || x.falta ? 'disabled' : ''}></div>
-      <label class="pp-val ${corVal(x.val)}${x.falta ? ' off' : ''}"><span>Validade</span><input type="date" data-pv="${i}" value="${h(x.val || '')}" ${!pode || x.falta ? 'disabled' : ''}><small>${txtVal(x.val)}</small></label>
-      <label class="pp-val pp-qtd${x.falta ? ' off' : ''}" ${precisaQtd(x) ? '' : 'hidden'}><span>Qtd a vender *</span><input type="number" inputmode="numeric" min="0" step="1" data-pqt="${i}" value="${x.qtd != null ? x.qtd : ''}" placeholder="un" ${!pode || x.falta ? 'disabled' : ''}><small></small></label>
+      <label class="pp-val ${corVal(x.val, q)}${x.falta ? ' off' : ''}"><span>Validade</span><input type="date" data-pv="${i}" value="${h(x.val || '')}" ${!pode || x.falta ? 'disabled' : ''}><small>${txtVal(x.val)}</small></label>
+      <label class="pp-val pp-qtd${x.falta ? ' off' : ''}" ${precisaQtd(x, q) ? '' : 'hidden'}><span>Qtd a vender *</span><input type="number" inputmode="numeric" min="0" step="1" data-pqt="${i}" value="${x.qtd != null ? x.qtd : ''}" placeholder="un" ${!pode || x.falta ? 'disabled' : ''}><small></small></label>
       <button class="btn sm pp-falta" data-pf="${i}" aria-pressed="${!!x.falta}" ${pode ? '' : 'disabled'}>Ruptura</button></div></div>`; }).join('');
   if (S.pesquisa.length > 8) { // lista grande: campo para achar o produto
     box.querySelector('#pp-topo').insertAdjacentHTML('afterend', `<input type="search" id="pp-busca" placeholder="Buscar produto (nome ou código)" autocomplete="off" style="margin-bottom:6px">`);
     $('#pp-busca').oninput = e => { const t = semAcento(e.target.value.trim()); box.querySelectorAll('.pp-item').forEach(it => { it.hidden = !!t && !semAcento(it.querySelector('.pp-nome').textContent).includes(t); }); };
   }
   marcaFeitos(box, resp);
-  const ok = S.pesquisa.filter(q => precoRespondido(resp[chaveQ(q)])).length;
+  const ok = S.pesquisa.filter(q => precoRespondido(resp[chaveQ(q)], q)).length;
   $('#v-pp-n').innerHTML = ok === S.pesquisa.length ? '<span style="color:var(--ok)">completa</span>' : `${ok} de ${S.pesquisa.length}`;
   box.querySelectorAll('[data-pq]').forEach(inp => {
     // máscara de dinheiro: digita só os números e a vírgula entra sozinha (4 → 0,04; 46 → 0,46; 460 → 4,60)
@@ -919,7 +921,7 @@ function renderPesquisa(v) {
     const novo = Object.assign({}, atual.falta ? {} : atual, { ts: Date.now() }); if (val) novo.val = val; else delete novo.val;
     atualiza({ precos: { [q]: (typeof novo.preco === 'number' || novo.val || novo.qtd != null) ? novo : null } });
     S.pqAtual = +inp.dataset.pv;
-    if (val && diasAte(val) < 10) { toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}. Informe a quantidade a vender.`, 5000); setTimeout(() => { const w = document.querySelector(`[data-pqt="${inp.dataset.pv}"]`); if (w) w.closest('.pp-val').hidden = false; }, 100); }
+    if (val && diasAte(val) < limVal(q).amar) { toast(`⚠️ ${q.replace(/^\d+ - /, '')}: ${txtVal(val)}. Informe a quantidade a vender.`, 5000); setTimeout(() => { const w = document.querySelector(`[data-pqt="${inp.dataset.pv}"]`); if (w) w.closest('.pp-val').hidden = false; }, 100); }
     proximoPasso('pq');
   });
   box.querySelectorAll('[data-pqt]').forEach(inp => inp.onchange = () => { // quantidade com essa validade na gôndola (a vender)
