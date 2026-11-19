@@ -6,10 +6,10 @@ import {
   toast, abreModal, fechaModal, confirma, erroMsg, distancia, pegaGPS, comprime, tiraFoto
 } from './fb.js';
 import { carregaRosto, leRosto, distRosto, LIMITE, marcosRosto, provaDeVida } from './rosto.js';
-import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco, janelaMarcada } from './jornada.js';
+import { regrasJornada, calcJornada, hmin, saldoTxt, janelaAlmoco, janelaMarcada, MOTIVOS_PAUSA, listaPausas, pausaAbonada } from './jornada.js';
 import { VERSAO, termoLGPD, termoAparelho, hashTexto, infoAparelho, VERSAO_ALMOCO, termoAlmoco } from './termos.js';
 
-export const VERSAO_APP = '2026-11-18.2';
+export const VERSAO_APP = '2026-11-19.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
 const CHECK_PADRAO = ['Produto em ruptura (faltando na gôndola)', 'Produto com validade próxima', 'Preço divergente da tabela', 'Gôndola abastecida e organizada'];
@@ -374,12 +374,12 @@ function estadoAlm() {
   return comecou && resta ? { f: 'obrigatorio', jan, ult } : { f: 'tarde', jan, ult };
 }
 // app bloqueado: almoço automático, termo não assinado, almoço em andamento ou almoço atrasado não marcado
-function almocoTravado() { return !!fixoAgora() || ['termo', 'almoco', 'obrigatorio'].includes(estadoAlm().f); }
+function almocoTravado() { return !!fixoAgora() || !!pausaAberta() || ['termo', 'almoco', 'obrigatorio'].includes(estadoAlm().f); }
 function bloqueiaAlmoco() {
   if (!almocoTravado()) return false;
   if (S.visita) { if (unsubFotos) { unsubFotos(); unsubFotos = null; } S.visita = null; $('#sheet').hidden = true; }
   const f = estadoAlm().f;
-  toast(fixoAgora() ? 'Horário de almoço: o app volta a funcionar às ' + ((regras().almocoFixo || {}).fim || '13:00') + '.'
+  toast(pausaAberta() ? 'Você está em pausa. Encerre a pausa para continuar.' : fixoAgora() ? 'Horário de almoço: o app volta a funcionar às ' + ((regras().almocoFixo || {}).fim || '13:00') + '.'
     : f === 'termo' ? 'Assine o termo do horário de almoço para continuar.'
     : f === 'obrigatorio' ? 'Marque o início do seu almoço para continuar.' : 'Você está em horário de almoço.', 5000);
   render(); return true;
@@ -387,8 +387,9 @@ function bloqueiaAlmoco() {
 let estAlm = null;
 setInterval(() => {
   if (!S.pid) return;
-  const e = estadoAlm(); const k = (fixoAgora() ? 'fixo' : '') + e.f + (e.f === 'almoco' && Date.now() >= e.libera ? 'lib' : '');
+  const e = estadoAlm(); const k = (fixoAgora() ? 'fixo' : '') + (pausaAberta() ? 'pausa' : '') + e.f + (e.f === 'almoco' && Date.now() >= e.libera ? 'lib' : '');
   if (k !== estAlm) { const trava = almocoTravado(); estAlm = k; if (trava && S.visita && !document.querySelector('#modal:not([hidden])')) { if (unsubFotos) { unsubFotos(); unsubFotos = null; } S.visita = null; $('#sheet').hidden = true; } render(); }
+  else if (pausaAberta()) { const t = $('#pz-cont'); if (t) t.textContent = hmin((Date.now() - pausaAberta().ini) / 60000); }
   else if (fixoAgora() || e.f === 'almoco') { const t = $('#alm-cont'); if (t) t.textContent = contaAlm(e); }
 }, 15000);
 function contaAlm(e) { const r = e.libera - Date.now(); return r > 0 ? 'faltam ' + hmin(Math.ceil(r / 60000)) : 'já pode encerrar'; }
@@ -437,6 +438,108 @@ function telaAlmoco(e) {
       <p style="margin:0">O almoço precisava começar até as <b>${hm(e.ult)}</b>. Para continuar usando o app, inicie o almoço agora. O horário fica registrado como <b>fora do horário</b>.</p>
       <button class="btn primary big" id="alm-ini" data-atr="1">Iniciar almoço agora</button></div>${rod}`;
   return '';
+}
+/* ---------- pausa na rota (fora o almoço) ----------
+   o promotor inicia e encerra a pausa; durante a pausa o app fica bloqueado.
+   o tempo de pausa desconta da jornada; se for justificada, ao encerrar o app pede o documento (atestado, declaração…)
+   para a empresa analisar, e o gestor pode abonar na Gestão. */
+const pausaAberta = () => listaPausas(S.jor).find(p => !p.fim) || null;
+const refPausaDoc = k => doc(db, 'dias', S.hoje, 'fotos', 'pausa-' + k + '_' + S.pid);
+function gravaPausa(k, campos) {
+  const atual = ((S.jor || {}).pausas || {})[k] || {};
+  S.jor = Object.assign({}, S.jor || {}, { pausas: Object.assign({}, (S.jor || {}).pausas || {}, { [k]: Object.assign({}, atual, campos) }) }); render();
+  return grava(setDoc(doc(db, 'dias', S.hoje, 'jornadas', S.pid), { promotorId: S.pid, pausas: { [k]: campos } }, { merge: true }));
+}
+function iniciaPausa() {
+  if (almocoTravado()) return bloqueiaAlmoco();
+  const aberta = Object.values(S.vis).find(v => v.status === 'em_loja');
+  abreModal(`<div class="spread"><h3>Inserir pausa</h3><button class="btn ghost" id="pz-x">Cancelar</button></div>
+    <p class="muted" style="margin:0;font-size:14px">Durante a pausa o app fica bloqueado. O tempo parado sai da sua jornada; se for justificada, a empresa analisa o documento e pode abonar.</p>
+    <div class="field"><span>Motivo</span><div class="chips" id="pz-mot">${MOTIVOS_PAUSA.map(m => `<button class="chip" data-m="${h(m)}" aria-pressed="false">${h(m)}</button>`).join('')}</div></div>
+    <label class="field"><span>Observação <small class="muted" id="pz-obr">(opcional)</small></span><textarea id="pz-obs" rows="2" maxlength="300" placeholder="Ex.: consulta no posto de saúde"></textarea></label>
+    <div class="field"><span>A pausa é justificada?</span><div class="chips" id="pz-jus"><button class="chip" data-j="1" aria-pressed="false">Sim, vou apresentar documento</button><button class="chip" data-j="0" aria-pressed="false">Não</button></div></div>
+    ${aberta ? `<div class="note">A visita em <b>${h(aberta.lojaNome || 'loja')}</b> continua aberta: termine depois da pausa.</div>` : ''}
+    <div id="pz-msg" style="font-size:13px;min-height:18px;color:var(--crit)"></div>
+    <button class="btn primary big" id="pz-ok">Iniciar pausa</button>`);
+  let mot = '', jus = null;
+  const marca = (sel, b) => document.querySelectorAll(sel + ' .chip').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  document.querySelectorAll('#pz-mot .chip').forEach(b => b.onclick = () => { mot = b.dataset.m; marca('#pz-mot', b); $('#pz-obr').textContent = mot === 'Outro' ? '(obrigatória)' : '(opcional)'; if (jus == null && /médic/i.test(mot)) { jus = true; marca('#pz-jus', document.querySelector('#pz-jus [data-j="1"]')); } });
+  document.querySelectorAll('#pz-jus .chip').forEach(b => b.onclick = () => { jus = b.dataset.j === '1'; marca('#pz-jus', b); });
+  $('#pz-x').onclick = fechaModal;
+  $('#pz-ok').onclick = async () => {
+    const obs = $('#pz-obs').value.trim(); const msg = $('#pz-msg');
+    if (!mot) return msg.textContent = 'Escolha o motivo da pausa.';
+    if (mot === 'Outro' && obs.length < 3) return msg.textContent = 'Escreva o motivo na observação.';
+    if (jus == null) return msg.textContent = 'Diga se a pausa é justificada.';
+    if (almocoTravado()) { fechaModal(); return bloqueiaAlmoco(); }
+    $('#pz-ok').disabled = true; fechaModal();
+    const ini = Date.now(), k = 'p' + ini;
+    let gps = null; try { gps = await pegaGPS(8000); } catch (e) {}
+    avisaGestor('pausa', `⏸️ ${primNome()} iniciou uma pausa`, `${mot}${obs ? ' — ' + obs : ''} · ${jus ? 'justificada' : 'não justificada'} · às ${hm(ini)}`, ['pause_button']);
+    gravaPausa(k, Object.assign({ ini, iniSrv: serverTimestamp(), motivo: mot, justificada: jus }, obs ? { obs } : {}, gps ? { gpsIni: gps } : {}));
+  };
+}
+async function encerraPausa() {
+  const p = pausaAberta(); if (!p) return;
+  if (!(await confirma(`Encerrar a pausa agora, às ${hm(Date.now())}?\n\nDuração: ${hmin((Date.now() - p.ini) / 60000)}.`, 'Encerrar pausa'))) return;
+  const fim = Date.now(); let gps = null; try { gps = await pegaGPS(8000); } catch (e) {}
+  avisaGestor('pausa', `▶️ ${primNome()} encerrou a pausa`, `${p.motivo} · ${hm(p.ini)}–${hm(fim)} (${hmin((fim - p.ini) / 60000)})`, ['arrow_forward']);
+  gravaPausa(p.k, Object.assign({ fim, fimSrv: serverTimestamp() }, gps ? { gpsFim: gps } : {}));
+  if (p.justificada) setTimeout(() => perguntaDocPausa(p.k), 300);
+}
+async function perguntaDocPausa(k) {
+  abreModal(`<h3>Documento da pausa</h3><p style="margin:0">Tem algum documento para anexar? <b>Atestado, declaração de comparecimento</b> ou outro documento para a empresa analisar.</p>
+    <button class="btn primary big" id="pd-sim">Sim, anexar agora</button><button class="btn" id="pd-dep">Anexar depois</button><button class="btn ghost" id="pd-nao">Não tenho documento</button>`);
+  $('#pd-sim').onclick = () => { fechaModal(); anexaDocPausa(k); };
+  $('#pd-dep').onclick = () => { fechaModal(); toast('Você pode anexar depois pelo cartão da pausa, na tela da rota.', 4500); };
+  $('#pd-nao').onclick = () => { fechaModal(); gravaPausa(k, { semDoc: true }); };
+}
+// anexa foto (câmera ou galeria) ou PDF do documento; fica em dias/<dia>/fotos/pausa-<k>_<promotor>
+function anexaDocPausa(k) {
+  abreModal(`<div class="spread"><h3>Anexar documento</h3><button class="btn ghost" id="ad-x">Fechar</button></div>
+    <p class="muted" style="margin:0;font-size:14px">Fotografe o documento inteiro, de perto e com boa luz, ou escolha uma foto ou PDF do celular.</p>
+    <button class="btn primary big" id="ad-cam">📷 Fotografar o documento</button>
+    <label class="btn big" style="text-align:center">📎 Escolher arquivo (foto ou PDF)<input type="file" id="ad-arq" accept="image/*,application/pdf" hidden></label>
+    <div id="ad-msg" class="muted" style="font-size:13px;min-height:18px"></div>`);
+  const msg = t => { const m = $('#ad-msg'); if (m) m.innerHTML = t; };
+  $('#ad-x').onclick = fechaModal;
+  const salva = async (d, nome, mime) => {
+    msg('Enviando…');
+    let imgs = []; try { const s = await getDoc(refPausaDoc(k)); if (s.exists()) imgs = s.data().imgs || []; } catch (e) {}
+    const tot = imgs.reduce((t, x) => t + (x.d || '').length, 0) + d.length;
+    if (tot > 950000) { msg('<span style="color:var(--crit)">Limite de anexos desta pausa atingido. Mande o documento ao supervisor.</span>'); return; }
+    imgs = imgs.concat([{ d, ts: Date.now(), tipo: 'doc', nome, mime }]);
+    await grava(setDoc(refPausaDoc(k), { pausa: k, promotorId: S.pid, imgs }), true);
+    gravaPausa(k, { docs: imgs.length, semDoc: false });
+    fechaModal(); toast('Documento anexado. A empresa vai analisar.', 4000);
+  };
+  $('#ad-cam').onclick = async () => { const cv = await tiraFoto({ titulo: 'Foto do documento' }); if (!cv) return anexaDocPausa(k); abreModal('<h3>Enviando o documento…</h3>'); await salva(await comprime(cv, 260000), 'Foto do documento', 'image/jpeg'); };
+  $('#ad-arq').onchange = async e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    try {
+      if (f.type === 'application/pdf') {
+        if (f.size > 650000) return msg('<span style="color:var(--crit)">PDF grande demais (máx. 650 KB). Fotografe o documento em vez de anexar o PDF.</span>');
+        const d = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+        await salva(d, f.name || 'documento.pdf', 'application/pdf');
+      } else if (/^image\//.test(f.type)) await salva(await comprime(f, 260000), f.name || 'foto do documento', 'image/jpeg');
+      else msg('<span style="color:var(--crit)">Escolha uma foto ou um PDF.</span>');
+    } catch (err) { msg('<span style="color:var(--crit)">Não consegui anexar: ' + h(erroMsg(err)) + '</span>'); }
+  };
+}
+function cartaoPausa() {
+  const ps = listaPausas(S.jor).filter(p => p.fim);
+  const lin = ps.map(p => `<div class="pz-lin"><div><b class="num">${hm(p.ini)}–${hm(p.fim)} · ${hmin((p.fim - p.ini) / 60000)}</b> <span class="muted">${h(p.motivo || '')}</span>
+      <div style="font-size:12px">${pausaAbonada(p) ? '<span style="color:var(--ok)">abonada pela empresa</span>' : p.abono && p.abono.ok === false ? '<span style="color:var(--crit)">não abonada</span>' : p.justificada ? (p.docs ? `📎 ${p.docs} documento${p.docs > 1 ? 's' : ''} · em análise` : p.semDoc ? 'justificada · sem documento' : '<span style="color:var(--crit)">falta o documento</span>') : '<span class="muted">não justificada · descontada da jornada</span>'}</div></div>
+      ${p.justificada && !pausaAbonada(p) ? `<button class="btn sm" data-pzdoc="${h(p.k)}">${p.docs ? '+ Documento' : 'Anexar documento'}</button>` : ''}</div>`).join('');
+  return `<div class="card pz-card stack"><div class="spread"><div class="label">⏸️ Pausa na rota</div><button class="btn sm" id="pz-ini">Inserir pausa</button></div>${lin || '<div class="muted" style="font-size:12px">Precisa parar (médico, imprevisto)? Inicie a pausa aqui e encerre quando voltar.</div>'}</div>`;
+}
+function telaPausa(p) {
+  return `<div class="card stack alm-tarja" style="text-align:center;padding:28px 18px"><div style="font-size:44px">⏸️</div><h2>Em pausa</h2>
+    <p style="margin:0">Pausa iniciada às <b>${hm(p.ini)}</b> · ${h(p.motivo || '')}${p.obs ? ' — ' + h(p.obs) : ''}.</p>
+    <p class="muted" style="margin:0">O aplicativo fica <b>bloqueado</b> durante a pausa. ${p.justificada ? 'Ao encerrar, anexe o documento (atestado, declaração).' : 'O tempo parado sai da jornada.'}</p>
+    <div class="num" id="pz-cont" style="font:800 34px var(--f-body)">${hmin((Date.now() - p.ini) / 60000)}</div>
+    <button class="btn primary big" id="pz-fim">Encerrar pausa</button></div>
+    <p class="muted" style="font-size:11px;text-align:center;margin:4px 0 0">Versão do app ${VERSAO_APP}</p>`;
 }
 function telaTermoAlmoco(c) {
   const R = regras().almocoJanela || { ini: '11:00', fim: '13:00' };
@@ -528,7 +631,7 @@ function render() {
   const feitas = lojas.filter(l => { const v = S.vis[vid(l.id)]; return v && v.status !== 'em_loja'; }).length;
   const extras = Object.entries(S.vis).filter(([k, v]) => v.foraRota || k !== vid(v.lojaId)).sort((a, b) => (a[1].checkin || 0) - (b[1].checkin || 0));
   let html = (S.prom && S.prom.espelhoDe ? `<div class="note warn"><b>Modo teste.</b> Você está usando a rota de outro promotor só para simular. Tudo o que fizer aqui fica no usuário de teste e não mexe na rota nem nos dados dele.</div>` : '') + `<div><div class="label">Rota de ${DIAS_LONGO[wdHoje()]} · ${S.hoje.split('-').reverse().slice(0, 2).join('/')}</div><h2 class="num">${feitas} de ${lojas.length} lojas</h2></div>
-    <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}${cartaoAlmoco()}`;
+    <div class="progress"><i style="width:${lojas.length ? Math.round(feitas / lojas.length * 100) : 0}%"></i></div>${cartaoJornada()}${cartaoAlmoco()}${cartaoPausa()}`;
   if (!lojas.length) html += `<div class="empty"><b>Sem lojas para hoje</b>Nenhuma loja está marcada para ${DIAS_LONGO[wdHoje()]} na sua rota.</div>`;
   else html += '<div class="stops">' + lojas.map((l, i) => {
     const v = S.vis[vid(l.id)]; const cls = v ? (v.status === 'em_loja' ? 'live' : v.status === 'concluida' ? 'done' : '') : '';
@@ -540,7 +643,9 @@ function render() {
   const EA = estadoAlm();
   if (EA.f === 'termo' && !fixoAgora()) { if (!$('#ta-ok')) telaTermoAlmoco(c); return; } // termo do almoço: tela fixa (não redesenha para não perder a escolha)
   const trava = fixoAgora();
+  const PZ = pausaAberta();
   if (!trava && (EA.f === 'almoco' || EA.f === 'obrigatorio')) html = telaAlmoco(EA);
+  if (!trava && PZ) html = telaPausa(PZ);
   if (trava) { // almoço automático: app bloqueado
     const f = regras().almocoFixo; const aberta = Object.values(S.vis).find(v => v.status === 'em_loja');
     html = `<div class="card stack alm-tarja" style="text-align:center;padding:28px 18px"><div style="font-size:44px">🍽️</div><h2>Horário de almoço</h2>
@@ -552,7 +657,10 @@ function render() {
   c.innerHTML = html;
   const bi = $('#alm-ini'); if (bi) bi.onclick = () => iniciaAlmoco(!!bi.dataset.atr);
   const bf = $('#alm-fim'); if (bf) bf.onclick = encerraAlmoco;
-  if (trava || EA.f === 'almoco' || EA.f === 'obrigatorio') return;
+  const pf = $('#pz-fim'); if (pf) pf.onclick = encerraPausa;
+  if (trava || PZ || EA.f === 'almoco' || EA.f === 'obrigatorio') return;
+  const pi = $('#pz-ini'); if (pi) pi.onclick = iniciaPausa;
+  c.querySelectorAll('[data-pzdoc]').forEach(b => b.onclick = () => anexaDocPausa(b.dataset.pzdoc));
   c.querySelectorAll('[data-loja]').forEach(b => b.onclick = () => abreVisita(b.dataset.loja, !!b.dataset.fora, b.dataset.vid));
   $('#b-fora').onclick = buscaFora; $('#b-var').onclick = () => minhaVariavel();
 }
@@ -613,7 +721,7 @@ function cartaoJornada() {
   const jan = janAlm(); const f = regras().almocoFixo;
   const alm = jan ? `<div class="jor-alm"><span class="muted">🍽️ Almoço automático das ${f.ini} às ${f.fim} (app bloqueado nesse horário)</span></div>`
     : jor.almocoFim && !janMar() ? `<div class="jor-alm"><span>🍽️ Almoço ${hm(jor.almocoInicio)}–${hm(jor.almocoFim)} · ${hmin((jor.almocoFim - jor.almocoInicio) / 60000)}</span></div>` : '';
-  const desc = J.almoco ? `<span class="muted" style="font-size:12px"> (almoço ${J.almocoMarcado || J.almocoFixo ? hmin(J.almoco) : 'de 1h'} descontado)</span>` : '';
+  const desc = (J.almoco ? `<span class="muted" style="font-size:12px"> (almoço ${J.almocoMarcado || J.almocoFixo ? hmin(J.almoco) : 'de 1h'} descontado)</span>` : '') + (J.pausa ? `<span class="muted" style="font-size:12px"> (pausa ${hmin(J.pausa)} descontada)</span>` : '');
   if (J.andamento || pend) return `<div class="jor card on"><div style="flex:1"><div class="label">Jornada desde ${hm(J.inicio)}</div><b class="num">${hmin(J.trabalhado)} trabalhadas${J.andamento ? '' : ' até a última saída'}</b>${desc}${alm}</div></div>`;
   return `<div class="jor card fim"><div style="flex:1"><div class="label">Jornada do dia</div><b class="num">${hm(J.inicio)}–${hm(J.fim)} · ${hmin(J.trabalhado)}</b> <span class="muted num" style="font-size:12px">saldo ${saldoTxt(J.saldo)}</span>${desc}${alm}</div></div>`;
 }

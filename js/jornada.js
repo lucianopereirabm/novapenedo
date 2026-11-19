@@ -37,12 +37,21 @@ export function problemaAlmoco(regras, date, j) {
 }
 
 // Jornada = do primeiro check-in do dia até o check-out da última loja.
+// pausas que o promotor marca no app (fora o almoço): { p<início>: { ini, fim, motivo, obs, justificada, abono: { ok, por, em } } }
+// toda pausa desconta da jornada; o gestor pode abonar (aí o tempo volta a contar)
+export const MOTIVOS_PAUSA = ['Consulta / atendimento médico', 'Assunto pessoal', 'Problema com transporte', 'Aguardando liberação na loja', 'Outro'];
+export function listaPausas(j) { return Object.entries((j && j.pausas) || {}).map(([k, p]) => Object.assign({ k }, p)).filter(p => p.ini).sort((a, b) => a.ini - b.ini); }
+export const pausaAbonada = p => !!(p && p.abono && p.abono.ok);
+// minutos de pausa NÃO abonada dentro do intervalo [a, b] (pausa aberta conta até "agora")
+export function pausaNoIntervalo(j, a, b, agora = Date.now()) {
+  return listaPausas(j).filter(p => !pausaAbonada(p)).reduce((t, p) => t + Math.max(0, Math.min(b, p.fim || agora) - Math.max(a, p.ini)), 0);
+}
 // vs = visitas do promotor no dia. Em andamento (hoje, ainda em loja ou com rota pendente) conta até agora.
 export function calcJornada({ vs = [], j = null, date, regras, agora = Date.now(), hoje }) {
   const wd = new Date(date + 'T12:00:00').getDay();
   const esperado = (regras.carga[wd] || 0);
   const ins = vs.map(v => v.checkin).filter(Boolean);
-  if (!ins.length) return { tem: false, esperado, wd };
+  if (!ins.length) return { tem: false, esperado, wd, pausas: listaPausas(j), pausaAberta: listaPausas(j).find(p => !p.fim) || null, pausa: 0 };
   const inicio = Math.min(...ins);
   const outs = vs.map(v => v.checkout).filter(Boolean);
   const emLoja = vs.some(v => v.status === 'em_loja');
@@ -63,8 +72,16 @@ export function calcJornada({ vs = [], j = null, date, regras, agora = Date.now(
     const fa = j.almocoFim || (date === hoje ? agora : j.almocoInicio);
     almoco = Math.max(0, Math.round((Math.min(fa, fim) - Math.max(j.almocoInicio, inicio)) / 60000));
   } else almoco = bruto > regras.almocoAcima ? regras.almocoMin : 0;
-  const trabalhado = Math.max(0, bruto - almoco);
-  return { tem: true, inicio, fim, fimEst, andamento, emLoja, bruto, almoco, almocoMarcado, almocoAberto, almocoFixo, almocoIni: aIni, almocoFim: aFim, almocoOpcao: j && j.almocoOpcao, trabalhado, esperado, saldo: trabalhado - esperado, wd };
+  // pausas (não abonadas) dentro da jornada, sem contar o que já caiu no almoço
+  const ps = listaPausas(j); let pausa = 0, pausaAbonadaMin = 0;
+  ps.forEach(p => {
+    const pf = p.fim || (date === hoje ? agora : p.ini); const a = Math.max(p.ini, inicio), b = Math.min(pf, fim); if (b <= a) return;
+    let m = b - a; if (almoco && aIni) m -= Math.max(0, Math.min(b, aFim || agora) - Math.max(a, aIni));
+    m = Math.max(0, Math.round(m / 60000)); if (pausaAbonada(p)) pausaAbonadaMin += m; else pausa += m;
+  });
+  const pausaAberta = ps.find(p => !p.fim) || null;
+  const trabalhado = Math.max(0, bruto - almoco - pausa);
+  return { tem: true, pausa, pausaAbonada: pausaAbonadaMin, pausas: ps, pausaAberta, inicio, fim, fimEst, andamento, emLoja, bruto, almoco, almocoMarcado, almocoAberto, almocoFixo, almocoIni: aIni, almocoFim: aFim, almocoOpcao: j && j.almocoOpcao, trabalhado, esperado, saldo: trabalhado - esperado, wd };
 }
 
 export const hmin = m => { if (m == null) return '—'; const s = m < 0 ? '-' : ''; m = Math.abs(Math.round(m)); return s + Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0'); };

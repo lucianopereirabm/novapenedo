@@ -392,3 +392,10 @@ td.pv-clic:hover,tr.pv-clic:hover td{text-decoration:underline;text-decoration-c
 .alm-card.on{border-color:#9CC3F5;background:#F3F8FE}
 .alm-card.fim{opacity:.85}
 @media (max-width:380px){.alm-card{flex-direction:column;align-items:stretch}}
+
+/* pausa na rota */
+.pz-card{padding:12px 14px;gap:8px}
+.pz-lin{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:8px;font-size:14px}
+.pz-lin .btn{flex:none}
+.pz-g{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border-top:1px solid var(--line);padding-top:8px;font-size:14px;flex-wrap:wrap}
+.pz-g .bigfoto{max-width:min(100%,520px)}
