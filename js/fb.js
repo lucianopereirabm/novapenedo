@@ -2,7 +2,7 @@
 import { initializeApp, deleteApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  createUserWithEmailAndPassword, updatePassword, deleteUser, setPersistence, browserLocalPersistence
+  createUserWithEmailAndPassword, updatePassword, deleteUser, setPersistence, browserLocalPersistence, sendPasswordResetEmail
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, persistentSingleTabManager, serverTimestamp,
@@ -35,7 +35,7 @@ try {
 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 export const db = _db;
 export {
-  signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
+  sendPasswordResetEmail, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
   deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField, serverTimestamp
 };
 

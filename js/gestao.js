@@ -1,6 +1,6 @@
 // Gestão: monitoramento com mapa, montar rotas, clientes, variável, equipe, configurações e importação
 import {
-  auth, db, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
+  auth, db, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, onAuthStateChanged, doc, getDoc, getDocs, setDoc, updateDoc,
   deleteDoc, collection, query, where, onSnapshot, writeBatch, deleteField,
   criarAcessoPromotor, apagarContaPromotor, criarContaMonitor, trocarSenhaConta, usuarioDeNome, $, h, semAcento, DIAS, DIAS_LONGO, ymd, diaSemana, dataBR, hm, dur, brl, n2, pctf,
   lsGet, lsSet, toast, abreModal, fechaModal, confirma, erroMsg, distancia
@@ -11,7 +11,7 @@ import { regrasJornada, calcJornada, hmin, saldoTxt, CARGA_PADRAO, problemaAlmoc
 // minutos (ms) de pausa NÃO abonada do dia dentro do intervalo [a, b]
 const pzMs = (J, a, b) => ((J && J.pausas) || []).filter(p => !pausaAbonada(p)).reduce((t, p) => t + Math.max(0, Math.min(b, p.fim || Date.now()) - Math.max(a, p.ini)), 0);
 
-const VERSAO_GESTAO = '2026-11-19.1';
+const VERSAO_GESTAO = '2026-11-26.1';
 const ADMIN_UID = 'LwETkIMFw0b6gVWl6XV450J1Dr12';
 const FAIXAS = [[0.75, 500], [1, 375], [1.5, 250], [2, 150]];
 const PESQ_PADRAO = ['Pão de forma Seven Boys', 'Pão de forma Plus Vita', 'Pão de forma Panco'];
@@ -31,6 +31,14 @@ $('#f-login').addEventListener('submit', async e => {
   try { await signInWithEmailAndPassword(auth, email, $('#lg-senha').value); }
   catch (err) { $('#lg-msg').textContent = erroMsg(err).replace('Login ou senha incorretos', 'E-mail ou senha incorretos'); }
 });
+// esqueci minha senha: o Firebase manda um e-mail com o link para criar uma senha nova (só para login por e-mail)
+$('#lg-esq').onclick = async () => {
+  const u = $('#lg-email').value.trim(), msg = $('#lg-msg');
+  if (!u.includes('@')) { msg.textContent = 'Digite acima o seu e-mail cadastrado e toque de novo em "Esqueci minha senha". Quem entra por usuário (sem e-mail) pede a senha nova ao administrador.'; $('#lg-email').focus(); return; }
+  msg.textContent = 'Enviando…';
+  try { auth.languageCode = 'pt-BR'; await sendPasswordResetEmail(auth, u); msg.textContent = `Se ${u} tiver acesso, chega em instantes um e-mail com o link para criar uma senha nova. Confira também a caixa de spam.`; }
+  catch (err) { msg.textContent = /invalid-email/.test(err && err.code) ? 'E-mail inválido. Confira e tente de novo.' : /too-many/.test(err && err.code) ? 'Muitas tentativas. Aguarde alguns minutos.' : `Se ${u} tiver acesso, chega em instantes um e-mail com o link para criar uma senha nova.`; }
+};
 $('#sair').onclick = async () => { await signOut(auth); location.reload(); };
 onAuthStateChanged(auth, async user => {
   $('#v-login').hidden = !!user; $('#sair').hidden = !user;
